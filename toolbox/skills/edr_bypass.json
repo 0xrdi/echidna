@@ -1,0 +1,132 @@
+{
+  "id": "edr-bypass",
+  "name": "EDR Bypass Agent",
+  "version": "1.0",
+  "description": "Analyze and bypass endpoint detection and response (EDR) products on compromised hosts using appropriate evasion techniques.",
+  "mitre_techniques": [
+    "T1562.001",
+    "T1070",
+    "T1027",
+    "T1055",
+    "T1218"
+  ],
+  "allowed_binaries": [
+    "cat",
+    "jq",
+    "head",
+    "tail",
+    "grep",
+    "python3",
+    "base64",
+    "curl"
+  ],
+  "allow_proxy": false,
+  "allow_delegate": true,
+  "allow_file_write": true,
+  "allow_file_read": true,
+  "requires_proxy": false,
+  "requires_callback_access": true,
+  "output_schema": {
+    "type": "object",
+    "required": [
+      "skill",
+      "target",
+      "status",
+      "findings"
+    ],
+    "properties": {
+      "skill": {
+        "type": "string",
+        "const": "edr-bypass"
+      },
+      "target": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "complete",
+          "partial",
+          "error"
+        ]
+      },
+      "findings": {
+        "type": "object",
+        "properties": {
+          "edr_identified": {
+            "type": "object",
+            "properties": {
+              "product": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "hooks_detected": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "drivers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "bypasses_applied": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "technique": {
+                  "type": "string"
+                },
+                "mitre_id": {
+                  "type": "string"
+                },
+                "target_component": {
+                  "type": "string"
+                },
+                "success": {
+                  "type": "boolean"
+                },
+                "revert_commands": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "detection_risk": {
+                  "type": "string"
+                },
+                "notes": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "recommendations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "next_skill": {
+              "type": "string"
+            },
+            "priority": {
+              "type": "string"
+            },
+            "rationale": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

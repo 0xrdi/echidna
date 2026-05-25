@@ -1,0 +1,175 @@
+{
+  "id": "attack-surface-analyzer",
+  "name": "Attack Surface Analyzer",
+  "version": "1.0",
+  "description": "Analyze reconnaissance data to identify attack paths, prioritize targets, and map findings to MITRE ATT&CK techniques. Pure reasoning \u2014 no tools, no network access.",
+  "mitre_techniques": [],
+  "allowed_binaries": [
+    "cat",
+    "jq",
+    "head",
+    "tail",
+    "grep",
+    "python3"
+  ],
+  "allow_proxy": false,
+  "allow_delegate": false,
+  "allow_file_write": true,
+  "allow_file_read": true,
+  "requires_proxy": false,
+  "requires_callback_access": false,
+  "output_schema": {
+    "type": "object",
+    "required": [
+      "skill",
+      "target",
+      "status",
+      "findings"
+    ],
+    "properties": {
+      "skill": {
+        "type": "string",
+        "const": "attack-surface-analyzer"
+      },
+      "target": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "complete",
+          "partial",
+          "error"
+        ]
+      },
+      "findings": {
+        "type": "object",
+        "properties": {
+          "attack_paths": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "risk": {
+                  "type": "string",
+                  "enum": [
+                    "critical",
+                    "high",
+                    "medium",
+                    "low"
+                  ]
+                },
+                "complexity": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high"
+                  ]
+                },
+                "detection_risk": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high"
+                  ]
+                },
+                "mitre_techniques": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "steps": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "order": {
+                        "type": "integer"
+                      },
+                      "action": {
+                        "type": "string"
+                      },
+                      "skill_required": {
+                        "type": "string"
+                      },
+                      "prerequisites": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                },
+                "evidence_from": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "priority_targets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "host": {
+                  "type": "string"
+                },
+                "service": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
+      },
+      "recommendations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "next_skill": {
+              "type": "string"
+            },
+            "attack_path": {
+              "type": "string"
+            },
+            "step": {
+              "type": "integer"
+            },
+            "priority": {
+              "type": "string"
+            },
+            "requires_approval": {
+              "type": "boolean"
+            },
+            "rationale": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

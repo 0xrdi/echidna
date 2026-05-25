@@ -1,0 +1,195 @@
+{
+  "id": "active-recon",
+  "name": "Active Reconnaissance",
+  "version": "1.0",
+  "description": "Perform active network reconnaissance against target infrastructure through a SOCKS proxy to enumerate services, versions, and potential vulnerabilities.",
+  "mitre_techniques": [
+    "T1046",
+    "T1595.001",
+    "T1595.002"
+  ],
+  "allowed_binaries": [
+    "nmap",
+    "httpx",
+    "nuclei",
+    "gobuster",
+    "ffuf",
+    "curl",
+    "wget",
+    "dig",
+    "python3",
+    "proxychains4",
+    "head",
+    "tail",
+    "cat",
+    "jq",
+    "grep",
+    "sort",
+    "uniq",
+    "wc"
+  ],
+  "allow_proxy": true,
+  "allow_delegate": false,
+  "allow_file_write": true,
+  "allow_file_read": true,
+  "requires_proxy": true,
+  "requires_callback_access": false,
+  "output_schema": {
+    "type": "object",
+    "required": [
+      "skill",
+      "target",
+      "status",
+      "findings"
+    ],
+    "properties": {
+      "skill": {
+        "type": "string",
+        "const": "active-recon"
+      },
+      "target": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "complete",
+          "partial",
+          "error"
+        ]
+      },
+      "confidence": {
+        "type": "string",
+        "enum": [
+          "high",
+          "medium",
+          "low"
+        ]
+      },
+      "findings": {
+        "type": "object",
+        "properties": {
+          "hosts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ip": {
+                  "type": "string"
+                },
+                "hostname": {
+                  "type": "string"
+                },
+                "os_guess": {
+                  "type": "string"
+                },
+                "ports": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "port": {
+                        "type": "integer"
+                      },
+                      "proto": {
+                        "type": "string"
+                      },
+                      "state": {
+                        "type": "string"
+                      },
+                      "service": {
+                        "type": "string"
+                      },
+                      "version": {
+                        "type": "string"
+                      },
+                      "banner": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "vulnerabilities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "host": {
+                  "type": "string"
+                },
+                "port": {
+                  "type": "integer"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "critical",
+                    "high",
+                    "medium",
+                    "low",
+                    "info"
+                  ]
+                },
+                "evidence": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "web_apps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "status_code": {
+                  "type": "integer"
+                },
+                "tech": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "auth_required": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      },
+      "recommendations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "next_skill": {
+              "type": "string"
+            },
+            "priority": {
+              "type": "string"
+            },
+            "rationale": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

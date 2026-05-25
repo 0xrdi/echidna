@@ -1,0 +1,111 @@
+{
+  "id": "lateral-movement",
+  "name": "Lateral Movement Agent",
+  "version": "1.0",
+  "description": "Move laterally through the network using credentials and access discovered during post-exploitation, delegating execution to active implants.",
+  "mitre_techniques": [
+    "T1021",
+    "T1047",
+    "T1053",
+    "T1550",
+    "T1563"
+  ],
+  "allowed_binaries": [
+    "cat",
+    "jq",
+    "head",
+    "tail",
+    "grep",
+    "python3",
+    "curl"
+  ],
+  "allow_proxy": false,
+  "allow_delegate": true,
+  "allow_file_write": true,
+  "allow_file_read": true,
+  "requires_proxy": false,
+  "requires_callback_access": true,
+  "output_schema": {
+    "type": "object",
+    "required": [
+      "skill",
+      "target",
+      "status",
+      "findings"
+    ],
+    "properties": {
+      "skill": {
+        "type": "string",
+        "const": "lateral-movement"
+      },
+      "target": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "complete",
+          "partial",
+          "error"
+        ]
+      },
+      "findings": {
+        "type": "object",
+        "properties": {
+          "movements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source_host": {
+                  "type": "string"
+                },
+                "target_host": {
+                  "type": "string"
+                },
+                "technique": {
+                  "type": "string"
+                },
+                "mitre_id": {
+                  "type": "string"
+                },
+                "credential_used": {
+                  "type": "string"
+                },
+                "success": {
+                  "type": "boolean"
+                },
+                "access_level": {
+                  "type": "string"
+                },
+                "new_callback_id": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "recommendations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "next_skill": {
+              "type": "string"
+            },
+            "priority": {
+              "type": "string"
+            },
+            "rationale": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}
