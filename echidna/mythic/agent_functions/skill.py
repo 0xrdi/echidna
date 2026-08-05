@@ -7,6 +7,9 @@ import json
 import os
 import uuid
 
+from .rpc import TaskCreateMessageWithTaskID
+from .wire import resolve_engine
+
 
 TOOLBOX_URL = "http://127.0.0.1:6789"
 MYTHIC_SERVER_HOST = os.environ.get("MYTHIC_SERVER_HOST", "mythic_server")
@@ -14,16 +17,9 @@ MYTHIC_SERVER_PORT = os.environ.get("MYTHIC_SERVER_PORT", "17443")
 DELEGATE_SERVER_PORT = 6790
 
 
-class _TaskCreateMessageWithTaskID(_OrigTaskCreateMessage):
-    """Extended version that includes task_id for operator resolution."""
-    def __init__(self, TaskID: int = None, **kwargs):
-        super().__init__(**kwargs)
-        self._task_id = TaskID
-
-    def to_json(self):
-        j = super().to_json()
-        j["task_id"] = self._task_id
-        return j
+# Kept as a module-local name for the call sites below; the implementation is
+# shared with campaign.py, which needs the same operator resolution.
+_TaskCreateMessageWithTaskID = TaskCreateMessageWithTaskID
 
 
 def _parse_config(extra_info):
@@ -378,6 +374,7 @@ class SkillCommand(CommandBase):
             provider = config.get('Provider')
             api_key = config.get('APIKey')
             model = config.get('Model')
+            base_url = (config.get('BaseURL') or "").rstrip('/')
             is_sub_agent = config.get('IsSubAgent') == 'true'
 
             # Unpack arguments — either from raw_input (single field) or legacy multi-field
@@ -403,12 +400,18 @@ class SkillCommand(CommandBase):
 
             if not provider:
                 raise Exception("Provider not found in callback config")
-            if not api_key:
+            if not api_key and not base_url:
                 raise Exception("API key not found in callback config")
             if not task:
                 raise Exception("Task description is required")
-            if provider == "Google":
-                raise Exception("Skill mode is not supported for Google provider. Use Anthropic or OpenAI.")
+            # Which toolbox engine drives this endpoint. A Custom endpoint that
+            # serves the Anthropic wire (LiteLLM and friends) runs skills directly;
+            # a chat-only one raises here with the bridge instructions.
+            engine = await resolve_engine(provider, config)
+
+            # Kimi serves the Anthropic wire at api.moonshot.ai/anthropic
+            if provider == "Kimi" and not base_url:
+                base_url = "https://api.moonshot.ai/anthropic/v1"
 
             # Fetch skill definition from toolbox to validate
             skill_info = await self._get_skill_info(skill_id)
@@ -417,11 +420,12 @@ class SkillCommand(CommandBase):
                 # === SUB-AGENT MODE: run skill directly in toolbox ===
                 delegate_session_id = config.get('DelegateSession')
                 await self._run_skill(
-                    taskData, provider, api_key, model, skill_id, task,
+                    taskData, engine, api_key, model, skill_id, task,
                     campaign_context=campaign_context,
                     socks_port=config.get('SocksPort'),
                     skill_info=skill_info,
                     delegate_session_id=delegate_session_id,
+                    base_url=base_url,
                 )
             else:
                 # === PARENT MODE ===
@@ -576,7 +580,7 @@ class SkillCommand(CommandBase):
 
     async def _run_skill(self, taskData, provider, api_key, model, skill_id, task,
                          campaign_context=None, socks_port=None, skill_info=None,
-                         delegate_session_id=None):
+                         delegate_session_id=None, base_url=""):
         """Sub-agent mode: run skill in toolbox and stream output."""
         await SendMythicRPCResponseCreate(MythicRPCResponseCreateMessage(
             TaskID=taskData.Task.ID,
@@ -592,6 +596,8 @@ class SkillCommand(CommandBase):
             "max_turns": 50,
             "timeout": 300,
         }
+        if base_url:
+            payload["base_url"] = base_url
         if campaign_context:
             payload["campaign_context"] = campaign_context
         if socks_port:

@@ -93,8 +93,9 @@ class ReportCommand(CommandBase):
             provider = config.get('Provider')
             api_key = config.get('APIKey')
             model = config.get('Model')
+            base_url = (config.get('BaseURL') or "").rstrip('/')
 
-            if not provider or not api_key:
+            if not provider or not (api_key or base_url):
                 raise Exception("Provider and API key required")
 
             # Parse options
@@ -154,10 +155,13 @@ class ReportCommand(CommandBase):
             )
 
             # Call the LLM
-            if provider == "OpenAI":
-                report_text = await self._call_openai(api_key, model, prompt)
+            if provider in ("OpenAI", "Custom"):
+                # Custom has no Responses wire — report over plain chat/completions.
+                report_text = (await self._call_openai_compatible(base_url, api_key, model, prompt)
+                               if provider == "Custom"
+                               else await self._call_openai(api_key, model, prompt, base_url))
             elif provider == "Anthropic":
-                report_text = await self._call_anthropic(api_key, model, prompt)
+                report_text = await self._call_anthropic(api_key, model, prompt, base_url)
             elif provider == "Google":
                 report_text = await self._call_google(api_key, model, prompt)
             else:
@@ -277,8 +281,9 @@ class ReportCommand(CommandBase):
 
         return outputs
 
-    async def _call_openai(self, api_key, model, prompt):
-        url = "https://api.openai.com/v1/responses"
+    async def _call_openai(self, api_key, model, prompt, base_url=""):
+        url = (f"{base_url.rstrip('/')}/responses" if base_url
+               else "https://api.openai.com/v1/responses")
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         payload = {"model": model or "gpt-5", "input": prompt}
 
@@ -297,8 +302,35 @@ class ReportCommand(CommandBase):
                     return str(data['output'])
                 return str(data)
 
-    async def _call_anthropic(self, api_key, model, prompt):
-        url = "https://api.anthropic.com/v1/messages"
+    async def _call_openai_compatible(self, base_url, api_key, model, prompt):
+        """Plain /chat/completions — for Custom endpoints with no Responses wire."""
+        base = (base_url or "").rstrip('/')
+        headers = {"Authorization": f"Bearer {api_key or 'not-needed'}",
+                   "Content-Type": "application/json"}
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as session:
+            if not model:
+                async with session.get(f"{base}/models", headers=headers) as resp:
+                    if resp.status != 200:
+                        raise Exception(f"No model set and {base}/models returned {resp.status}")
+                    ids = [m.get('id') for m in (await resp.json()).get('data', []) if m.get('id')]
+                    if not ids:
+                        raise Exception(f"No model set and {base}/models listed none")
+                    model = ids[0]
+            payload = {"model": model, "messages": [{"role": "user", "content": prompt}]}
+            async with session.post(f"{base}/chat/completions", headers=headers, json=payload) as resp:
+                if resp.status != 200:
+                    raise Exception(f"Endpoint error {resp.status}: {(await resp.text())[:500]}")
+                data = await resp.json()
+        try:
+            return data['choices'][0]['message']['content']
+        except (KeyError, IndexError, TypeError):
+            return str(data)
+
+    async def _call_anthropic(self, api_key, model, prompt, base_url=""):
+        root = (base_url or "").rstrip('/')
+        if root.endswith('/v1'):
+            root = root[:-3].rstrip('/')
+        url = f"{root}/v1/messages" if root else "https://api.anthropic.com/v1/messages"
         headers = {
             "x-api-key": api_key,
             "anthropic-version": "2023-06-01",

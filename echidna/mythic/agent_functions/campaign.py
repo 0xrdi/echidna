@@ -3,6 +3,9 @@ from mythic_container.MythicRPC import *
 import json
 import asyncio
 
+from .rpc import TaskCreateMessageWithTaskID
+from .wire import resolve_engine
+
 
 TOOLBOX_URL = "http://127.0.0.1:6789"
 
@@ -178,12 +181,14 @@ class CampaignCommand(CommandBase):
             provider = config.get('Provider')
             api_key = config.get('APIKey')
             model = config.get('Model')
+            base_url = (config.get('BaseURL') or "").rstrip('/')
 
-            if not provider or not api_key:
+            if not provider or not (api_key or base_url):
                 raise Exception("Provider and API key required")
 
-            if provider == "Google":
-                raise Exception("Campaign is not supported for Google provider.")
+            # Fail here, before queuing a chain, if this endpoint can't drive an
+            # agent at all. The individual skills re-resolve the same way.
+            await resolve_engine(provider, config)
 
             # Parse campaign args
             raw_input = taskData.args.get_arg("raw_input")
@@ -357,12 +362,15 @@ class CampaignCommand(CommandBase):
                     "context": campaign_context,
                 })
 
-                # Create skill task on THIS callback (not a child)
+                # Create skill task on THIS callback (not a child). TaskID is
+                # required: without it Mythic can't resolve the operator and
+                # rejects the call, so no skill ever launches.
                 task_resp = await SendMythicRPCTaskCreate(
-                    MythicRPCTaskCreateMessage(
+                    TaskCreateMessageWithTaskID(
                         AgentCallbackID=taskData.Callback.AgentCallbackID,
                         CommandName="skill",
                         Params=skill_params,
+                        TaskID=taskData.Task.ID,
                     )
                 )
 

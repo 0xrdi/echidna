@@ -167,6 +167,8 @@ class RunRequest(BaseModel):
     max_turns: int = 50
     timeout: int = 300
     socks_port: int = 0
+    # Optional OpenAI-compatible / bridged endpoint. Empty = the vendor default.
+    base_url: str = ""
 
 
 class SkillRunRequest(BaseModel):
@@ -180,6 +182,77 @@ class SkillRunRequest(BaseModel):
     timeout: int = 300
     socks_port: int = 0
     delegate_session_id: Optional[str] = None
+    base_url: str = ""
+
+
+# ------------------------------------------------------------------
+# Endpoint overrides for the agent SDKs.
+#
+# The skill engines do NOT speak plain /chat/completions: claude-agent-sdk talks
+# the Anthropic /v1/messages wire and the Codex SDK talks the OpenAI /v1/responses
+# wire. A raw inference server implements neither — but a gateway usually does:
+# LiteLLM (and one-api / new-api) serve /v1/messages natively, so a discovered
+# gateway can drive skills with no bridge in between. Echidna resolves which wire
+# an endpoint speaks before it gets here and sends the matching provider; the
+# "Custom" fallback below is for direct callers of this API.
+# ------------------------------------------------------------------
+def _sdk_env(req) -> dict:
+    """Environment for claude-agent-sdk (spawns the Claude Code CLI).
+
+    base_url is carried OpenAI-style *with* /v1 (what `infreerence integrations`
+    emits), but ANTHROPIC_BASE_URL must be the ROOT — the client appends
+    /v1/messages itself. Passing it through raw yields /v1/v1/messages.
+
+    Both model vars are pinned to the model we were given. Left unset, the CLI
+    asks for its own claude-* ids — above all a haiku-class model for background
+    work — which a discovered gateway does not serve, so every one of those
+    sub-requests 404s. The auth token is sent both ways (x-api-key and Bearer)
+    because gateways differ in which they honour.
+    """
+    env = {"ANTHROPIC_API_KEY": req.api_key}
+    base_url = (getattr(req, "base_url", "") or "").rstrip("/")
+    if base_url:
+        if base_url.endswith("/v1"):
+            base_url = base_url[:-3].rstrip("/")
+        env["ANTHROPIC_BASE_URL"] = base_url
+        env["ANTHROPIC_AUTH_TOKEN"] = req.api_key
+        model = (getattr(req, "model", "") or "").strip()
+        if model:
+            env["ANTHROPIC_MODEL"] = model
+            env["ANTHROPIC_SMALL_FAST_MODEL"] = model
+            env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = model
+            env["ANTHROPIC_DEFAULT_FABLE_MODEL"] = model
+    return env
+
+
+def _first_model(base_url: str, api_key: str) -> str:
+    """First model id an OpenAI-compatible endpoint advertises ("" if none).
+
+    stdlib urllib on purpose — the toolbox image ships neither aiohttp nor
+    requests, and adding a dependency here means rebuilding the container.
+    """
+    import urllib.request
+    url = f"{base_url.rstrip('/')}/models"
+    request = urllib.request.Request(
+        url, headers={"Authorization": f"Bearer {api_key or 'not-needed'}"})
+    try:
+        with urllib.request.urlopen(request, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        ids = [m.get("id") for m in data.get("data", [])
+               if isinstance(m, dict) and m.get("id")]
+        return ids[0] if ids else ""
+    except Exception:
+        return ""
+
+
+def _codex_opts(req) -> dict:
+    """Options for the Codex SDK. CodexOptions is extra='forbid' — only send
+    keys it declares (codex_path_override, base_url, api_key, env)."""
+    opts = {"api_key": req.api_key}
+    base_url = getattr(req, "base_url", "") or ""
+    if base_url:
+        opts["base_url"] = base_url.rstrip("/")
+    return opts
 
 
 # Delegate server URL (Echidna container runs it on port 6790)
@@ -264,6 +337,8 @@ async def run_agent(req: RunRequest):
         _setup_proxychains(work_dir, req.socks_port)
         req.task = _augment_task_with_proxy(req.task, work_dir)
 
+    if req.provider == "Custom" and req.base_url:
+        req.provider = "Anthropic"      # endpoint serves /v1/messages itself
     if req.provider == "Anthropic":
         return StreamingResponse(
             _stream_claude_sdk(req, work_dir),
@@ -275,7 +350,7 @@ async def run_agent(req: RunRequest):
             media_type="text/plain",
         )
     else:
-        return {"error": f"Provider '{req.provider}' not supported for auto. Use Anthropic or OpenAI."}
+        return {"error": f"Provider '{req.provider}' not supported for auto. Use Anthropic, OpenAI or Custom."}
 
 
 # ============================================================
@@ -292,11 +367,32 @@ async def run_skill(req: SkillRunRequest):
 
     skill = SKILL_REGISTRY[req.skill_id]
 
-    # Validate provider support
+    # Validate provider support. "Custom" means an OpenAI-compatible endpoint that
+    # Echidna already confirmed speaks the Anthropic wire (LiteLLM and the one-api /
+    # new-api gateways serve /v1/messages themselves), so it runs on the Claude
+    # engine — it just needs the endpoint to talk to.
+    if req.provider == "Custom":
+        if not req.base_url:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Provider 'Custom' requires base_url (the endpoint that "
+                                  "serves the Anthropic /v1/messages wire)."}
+            )
+        req.provider = "Anthropic"
+    # A bare endpoint needs a concrete model name: unset, the CLI falls back to
+    # its own claude-* ids, which the endpoint doesn't serve.
+    if req.base_url and not (req.model or "").strip():
+        req.model = await asyncio.to_thread(_first_model, req.base_url, req.api_key)
+        if not req.model:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"No model given and {req.base_url}/models listed none. "
+                                  f"Rebuild the payload with an explicit model."}
+            )
     if req.provider not in ("Anthropic", "OpenAI"):
         return JSONResponse(
             status_code=400,
-            content={"error": f"Provider '{req.provider}' not supported. Use Anthropic or OpenAI."}
+            content={"error": f"Provider '{req.provider}' not supported. Use Anthropic, OpenAI or Custom."}
         )
 
     # Validate proxy requirements
@@ -360,6 +456,9 @@ async def run_skill(req: SkillRunRequest):
         max_turns=req.max_turns,
         timeout=req.timeout,
         socks_port=req.socks_port if skill.get("allow_proxy") else 0,
+        # Without this the skill silently runs against the vendor's own API
+        # instead of the endpoint the operator built the payload for.
+        base_url=req.base_url,
     )
 
     # Generate a job ID from the work_dir basename
@@ -699,7 +798,7 @@ async def _stream_skill_claude(req: RunRequest, work_dir: str, skill: dict):
         allowed_tools=allowed_tools,
         permission_mode="bypassPermissions",
         cwd=work_dir,
-        env={"ANTHROPIC_API_KEY": req.api_key},
+        env=_sdk_env(req),
         include_partial_messages=True,
     )
 
@@ -805,7 +904,7 @@ async def _stream_skill_codex(req: RunRequest, work_dir: str, skill: dict):
     is_error = False
 
     try:
-        codex = Codex({"api_key": req.api_key})
+        codex = Codex(_codex_opts(req))
         thread = codex.start_thread({
             "model": model,
             "sandbox_mode": "danger-full-access",
@@ -1141,7 +1240,7 @@ async def _stream_claude_sdk(req: RunRequest, work_dir: str):
         allowed_tools=["Bash", "Read", "Write", "Edit", "Glob", "Grep"],
         permission_mode="bypassPermissions",
         cwd=work_dir,
-        env={"ANTHROPIC_API_KEY": req.api_key},
+        env=_sdk_env(req),
         include_partial_messages=True,
     )
 
@@ -1231,7 +1330,7 @@ async def _stream_codex_sdk(req: RunRequest, work_dir: str):
     is_error = False
 
     try:
-        codex = Codex({"api_key": req.api_key})
+        codex = Codex(_codex_opts(req))
         thread = codex.start_thread({
             "model": model,
             "sandbox_mode": "danger-full-access",

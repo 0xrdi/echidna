@@ -44,9 +44,12 @@ sudo docker compose up -d --build
 | `campaign --resume` / `campaign --skip` | Continue or skip a paused campaign | `campaign --resume` |
 | `report [--format md\|html]` | Generate findings report from skill outputs | `report` / `report --format html` |
 | `jobs [stop <id>]` | List or stop active jobs | `jobs` / `jobs stop abc123` |
+| `bridge [anthropic\|openai]` | Probe this callback's endpoint and print LiteLLM bridge setup | `bridge` / `bridge openai` |
 | `exit` | Deactivate callback | `exit` |
 
-> Google only supports `chat` and `model`. Skills and campaigns require Anthropic or OpenAI.
+> Google only supports `chat` and `model`. Skills and campaigns need an *agent wire*:
+> Anthropic, OpenAI, or a `Custom` endpoint that serves the Anthropic `/v1/messages`
+> wire — see [Custom endpoints](#custom-endpoints-infreerence).
 
 ## Skills
 
@@ -145,11 +148,91 @@ echidna/
 
 ## Providers
 
-| Provider | API | Default Model | Auth |
-|----------|-----|---------------|------|
-| Anthropic | Messages API | `claude-opus-4-6` | `x-api-key` header |
-| OpenAI | Responses API | `gpt-5` | `Bearer` token |
-| Google | Gemini generateContent | `gemini-2.5-flash` | API key param |
+| Provider | Engine | API | Default Model | Build fields |
+|----------|--------|-----|---------------|--------------|
+| Anthropic | Claude Code | Messages API | `claude-opus-4-6` | `anthropic_key` **or** `anthropic_base_url` |
+| OpenAI | Codex | Responses API | `gpt-5` | `openai_key` **or** `openai_base_url` |
+| Google | — (chat/model only) | Gemini generateContent | `gemini-2.5-flash` | `google_key` |
+| Custom | whichever wire answers | OpenAI-compatible | first model listed | `openai_base_url` (+ optional `openai_key`) |
+
+Per provider there are two ways in, and you need **either one, not both**:
+
+- **`<provider>_key`** — the vendor API. No base URL anywhere.
+- **`<provider>_base_url`** — your own endpoint. **No API key at all** (it becomes
+  `not-needed` internally, since OpenAI clients demand a non-empty string).
+
+Supplying both is allowed but only useful for a gateway that wants a virtual key —
+then the key you gave is used against your endpoint. Fields belonging to the other
+providers are ignored, so one form can hold several vendors at once. The only
+error is supplying *neither*.
+
+Base URLs are OpenAI-style and **include `/v1`** — exactly what `infreerence
+integrations` prints. Echidna strips it to the root where the Anthropic client
+needs that.
+
+### Which wire, and what to do when it's missing
+
+Skills and campaigns spawn real coding agents, so they need an **agent wire**, not
+plain `/chat/completions`:
+
+| you picked | engine | endpoint must serve |
+|---|---|---|
+| `provider=Anthropic` + `anthropic_base_url` | Claude Code | `POST /v1/messages` |
+| `provider=OpenAI` + `openai_base_url` | Codex | `POST /v1/responses` |
+| `provider=Custom` + `openai_base_url` | whichever answers | either of the above |
+
+The payload build **probes the endpoint** and prints the verdict in the
+Configuration step before you commit:
+
+```
+Provider : OpenAI
+Model    : claude-opus-4.5
+Endpoint : http://10.0.0.5:4000/v1
+Models   : 17 listed
+Wire     : openai — skills + campaigns ENABLED (Codex)
+```
+
+If the wire is missing, the build step prints the full LiteLLM bridge guide
+inline, and the **`bridge` command** reprints it on demand from any callback —
+it probes live first, tells you what the endpoint does today, and gives the
+setup both **with infreerence** (one command) and **by hand**. LiteLLM serves
+both wires, so a single bridge unlocks Claude Code *and* Codex.
+
+### Custom endpoints (infreerence)
+
+`Custom` points Echidna at any OpenAI-compatible endpoint — the kind
+[infreerence](https://github.com/0xrdi/infreerence) finds. What it can do depends
+on which wire that endpoint speaks, and the payload build **probes and tells you**:
+
+- **A gateway** — LiteLLM, one-api, new-api — serves the Anthropic `/v1/messages`
+  wire itself. Everything works: `chat`, `model`, `report`, **`skill` and
+  `campaign`**, with no bridge in between. The build step prints
+  `Anthropic /v1/messages wire: YES — skills + campaigns enabled`.
+- **A raw inference server** — vLLM, Ollama, llama.cpp, LocalAI — speaks only the
+  chat wire, so it drives `chat`/`model`/`report`. To get skills, front it with a
+  local bridge and point `base_url` at that instead:
+
+  ```bash
+  infreerence bridge <scan_id> <ip:port> --run     # serves every wire on 127.0.0.1:4000
+  # then build with base_url = http://127.0.0.1:4000/v1
+  ```
+
+Getting the parameters for a discovered endpoint:
+
+```bash
+infreerence integrations <scan_id> <ip:port>          # base URL + every model it serves
+infreerence integrations <scan_id> <ip:port> --tool claude-code   # the same wire Echidna uses
+```
+
+`base_url` is the OpenAI-style URL **including `/v1`** (exactly what infreerence
+emits); Echidna strips it where the Anthropic client needs a root. Both model
+variables are pinned to the model you chose, because the Claude Code CLI otherwise
+requests its own `claude-*` ids — including a haiku-class model for background work
+— which a discovered endpoint does not serve.
+
+> Point this only at an endpoint you own or are authorized to test. Driving
+> someone else's exposed inference server consumes their compute and their
+> upstream API credits.
 
 ## License
 

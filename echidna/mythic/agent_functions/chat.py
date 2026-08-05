@@ -4,6 +4,19 @@ import aiohttp
 import json
 
 
+def _anthropic_root(base_url: str) -> str:
+    """Strip a trailing /v1 so the Anthropic path can be appended cleanly.
+
+    base_url is carried OpenAI-style (…/v1) because that is what
+    `infreerence integrations` emits, but the Anthropic wire is /v1/messages off
+    the ROOT — without this you get /v1/v1/messages.
+    """
+    root = (base_url or "").rstrip('/')
+    if root.endswith('/v1'):
+        root = root[:-3].rstrip('/')
+    return root
+
+
 class ChatArguments(TaskArguments):
     def __init__(self, command_line, **kwargs):
         super().__init__(command_line, **kwargs)
@@ -74,23 +87,32 @@ class ChatCommand(CommandBase):
             provider = config.get('Provider')
             model = config.get('Model')
             api_key = config.get('APIKey')
+            base_url = (config.get('BaseURL') or "").rstrip('/')
             message = taskData.args.get_arg("message")
 
-            # Validate we got all required config
+            # Validate we got all required config. Custom endpoints need a base
+            # URL instead of a key — most self-hosted servers are unauthenticated.
             if not provider:
                 raise Exception(f"Provider not found in callback config. Got: {extra_info[:100]}")
-            if not api_key:
+            if provider == "Custom":
+                if not base_url:
+                    raise Exception("BaseURL not found in callback config. Please rebuild the payload.")
+            elif not api_key:
                 raise Exception("API key not found in callback config")
             if not message:
                 raise Exception("Message is required")
 
             # Route to appropriate provider
             if provider == "OpenAI":
-                llm_response = await self._call_openai(api_key, model, message)
+                llm_response = await self._call_openai(api_key, model, message, base_url)
             elif provider == "Anthropic":
-                llm_response = await self._call_anthropic(api_key, model, message)
+                llm_response = await self._call_anthropic(api_key, model, message, base_url)
             elif provider == "Google":
                 llm_response = await self._call_google(api_key, model, message)
+            elif provider == "Kimi":
+                llm_response = await self._call_kimi(api_key, model, message)
+            elif provider == "Custom":
+                llm_response = await self._call_openai_compatible(base_url, api_key, model, message)
             else:
                 raise Exception(f"Unknown provider: {provider}")
 
@@ -119,9 +141,13 @@ class ChatCommand(CommandBase):
 
         return response
 
-    async def _call_openai(self, api_key: str, model: str, message: str) -> str:
-        """Call OpenAI Responses API"""
-        url = "https://api.openai.com/v1/responses"
+    async def _call_openai(self, api_key: str, model: str, message: str, base_url: str = "") -> str:
+        """Call the OpenAI Responses API, or a bridge serving that wire.
+
+        base_url carries /v1, so /responses is appended directly.
+        """
+        url = (f"{base_url.rstrip('/')}/responses" if base_url
+               else "https://api.openai.com/v1/responses")
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
@@ -146,9 +172,10 @@ class ChatCommand(CommandBase):
                 else:
                     return str(data)
 
-    async def _call_anthropic(self, api_key: str, model: str, message: str) -> str:
-        """Call Anthropic Messages API"""
-        url = "https://api.anthropic.com/v1/messages"
+    async def _call_anthropic(self, api_key: str, model: str, message: str, base_url: str = "") -> str:
+        """Call the Anthropic Messages API, or a bridge serving that wire."""
+        url = (f"{_anthropic_root(base_url)}/v1/messages" if base_url
+               else "https://api.anthropic.com/v1/messages")
         headers = {
             "x-api-key": api_key,
             "anthropic-version": "2023-06-01",
@@ -196,6 +223,50 @@ class ChatCommand(CommandBase):
                 data = await resp.json()
                 # Extract text from first candidate
                 return data['candidates'][0]['content']['parts'][0]['text']
+
+    async def _call_kimi(self, api_key: str, model: str, message: str) -> str:
+        """Call Moonshot AI (Kimi) via their OpenAI-compatible endpoint."""
+        return await self._call_openai_compatible(
+            "https://api.moonshot.ai/v1", api_key, model, message)
+
+    async def _call_openai_compatible(self, base_url: str, api_key: str, model: str, message: str) -> str:
+        """Call any OpenAI-compatible /chat/completions endpoint.
+
+        This is the surface `infreerence integrations` emits (vLLM, Ollama, LiteLLM,
+        LocalAI, LM Studio, ...). Deliberately NOT the Responses API used by
+        _call_openai: /v1/responses is OpenAI-proper and virtually no self-hosted
+        server implements it, whereas /chat/completions is universal — so no
+        translating proxy is needed for this path. Self-hosted servers usually
+        ignore the key, and when no model is pinned the first one advertised wins.
+        """
+        headers = {
+            "Authorization": f"Bearer {api_key or 'not-needed'}",
+            "Content-Type": "application/json",
+        }
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as session:
+            if not model or model.strip() == "":
+                async with session.get(f"{base_url}/models", headers=headers) as resp:
+                    if resp.status != 200:
+                        raise Exception(
+                            f"No model configured and {base_url}/models returned "
+                            f"{resp.status}: {(await resp.text())[:200]}"
+                        )
+                    listing = await resp.json()
+                    ids = [m.get('id') for m in listing.get('data', []) if m.get('id')]
+                    if not ids:
+                        raise Exception(f"No model configured and {base_url}/models listed none")
+                    model = ids[0]
+
+            payload = {"model": model, "messages": [{"role": "user", "content": message}]}
+            async with session.post(f"{base_url}/chat/completions", headers=headers, json=payload) as resp:
+                if resp.status != 200:
+                    raise Exception(f"Endpoint error {resp.status}: {(await resp.text())[:500]}")
+                data = await resp.json()
+
+        try:
+            return data['choices'][0]['message']['content']
+        except (KeyError, IndexError, TypeError):
+            return str(data)
 
     async def process_response(self, task: PTTaskMessageAllData, response: any) -> PTTaskProcessResponseMessageResponse:
         """Not needed for virtual agent - all processing in create_go_tasking"""
