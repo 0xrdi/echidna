@@ -23,10 +23,14 @@ _TaskCreateMessageWithTaskID = TaskCreateMessageWithTaskID
 
 
 def _parse_config(extra_info):
-    """Parse pipe-delimited config from ExtraInfo."""
-    config = {}
+    """Parse JSON (or legacy pipe-delimited) config from ExtraInfo."""
     if not extra_info or extra_info.strip() == "":
-        return config
+        return {}
+    try:
+        return json.loads(extra_info)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    config = {}
     for part in extra_info.split('|'):
         if ':' not in part:
             continue
@@ -770,11 +774,13 @@ class SkillCommand(CommandBase):
 
         parent_display_id = taskData.Callback.DisplayID
 
-        child_extra_info = taskData.Callback.ExtraInfo + "|IsSubAgent:true"
+        parent_config = _parse_config(taskData.Callback.ExtraInfo)
+        parent_config["IsSubAgent"] = "true"
         if socks_port > 0:
-            child_extra_info += f"|SocksPort:{socks_port}"
+            parent_config["SocksPort"] = str(socks_port)
         if delegate_session_id:
-            child_extra_info += f"|DelegateSession:{delegate_session_id}"
+            parent_config["DelegateSession"] = delegate_session_id
+        child_extra_info = json.dumps(parent_config)
 
         child_resp = await SendMythicRPCCallbackCreate(
             MythicRPCCallbackCreateMessage(

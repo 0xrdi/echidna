@@ -20,6 +20,10 @@ def _parse_config(extra_info):
     config = {}
     if not extra_info or extra_info.strip() == "":
         return config
+    try:
+        return json.loads(extra_info)
+    except (json.JSONDecodeError, TypeError):
+        pass
     for part in extra_info.split('|'):
         if ':' not in part:
             continue

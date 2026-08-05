@@ -60,9 +60,13 @@ _campaign_state: dict = {}
 
 
 def _parse_config(extra_info):
-    config = {}
     if not extra_info or extra_info.strip() == "":
-        return config
+        return {}
+    try:
+        return json.loads(extra_info)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    config = {}
     for part in extra_info.split('|'):
         if ':' not in part:
             continue

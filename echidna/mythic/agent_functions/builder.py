@@ -239,13 +239,15 @@ No binary is generated - creates instant callback for chat operations.
             )
 
             # Step 2: Create virtual callback with configuration in ExtraInfo
-            # Store config in ExtraInfo since Description gets overwritten by Mythic
-            # Keys are split on the FIRST ':' only, so a URL's own colons survive intact.
-            # Downstream commands (chat/model/report/skill/campaign) all read this
-            # same shape, so the new per-provider form resolves into it unchanged.
-            callback_config = f"Provider:{provider}|Model:{model}|APIKey:{api_key}"
+            # Store config in ExtraInfo since Description gets overwritten by Mythic.
+            # JSON-encoded so values containing any character (pipes, colons, etc.)
+            # survive intact. Downstream commands try JSON first, falling back to the
+            # legacy pipe-delimited format for callbacks built before this change.
+            cfg = {"Provider": provider, "Model": model, "APIKey": api_key}
             if base_url:
-                callback_config += f"|BaseURL:{base_url}|Wire:{wire}"
+                cfg["BaseURL"] = base_url
+                cfg["Wire"] = wire
+            callback_config = json.dumps(cfg)
 
             # For Custom, surface the endpoint itself in the callback rather than
             # the literal word "Custom" — the operator needs to see what they hit.

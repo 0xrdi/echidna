@@ -29,9 +29,13 @@ class ModelArguments(TaskArguments):
 
 
 def _parse_config(extra_info):
-    config = {}
     if not extra_info or extra_info.strip() == "":
-        return config
+        return {}
+    try:
+        return json.loads(extra_info)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    config = {}
     for part in extra_info.split('|'):
         if ':' not in part:
             continue
@@ -113,7 +117,7 @@ class ModelCommand(CommandBase):
                 # protocol key (which gates skills), plus IsSubAgent / DelegateSession /
                 # SocksPort on a sub-agent callback.
                 config['Model'] = new_model
-                new_config = "|".join(f"{k}:{v}" for k, v in config.items())
+                new_config = json.dumps(config)
 
                 update_resp = await SendMythicRPCCallbackUpdate(
                     MythicRPCCallbackUpdateMessage(

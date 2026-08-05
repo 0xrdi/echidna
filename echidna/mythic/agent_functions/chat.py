@@ -76,13 +76,15 @@ class ChatCommand(CommandBase):
             if not extra_info or extra_info.strip() == "":
                 raise Exception("Callback configuration not found. Please rebuild the payload.")
 
-            config_parts = extra_info.split('|')
-            config = {}
-            for part in config_parts:
-                if ':' not in part:
-                    continue
-                key, value = part.split(':', 1)
-                config[key] = value
+            try:
+                config = json.loads(extra_info)
+            except (json.JSONDecodeError, TypeError):
+                config = {}
+                for part in extra_info.split('|'):
+                    if ':' not in part:
+                        continue
+                    key, value = part.split(':', 1)
+                    config[key] = value
 
             provider = config.get('Provider')
             model = config.get('Model')
