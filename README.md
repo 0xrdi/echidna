@@ -147,3 +147,7 @@ The `bridge` command on any callback reprints the setup guide on demand.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Acknowledgements
+
+- [Mythic C2](https://github.com/its-a-feature/Mythic) by its-a-feature
