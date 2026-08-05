@@ -168,6 +168,9 @@ class ReportCommand(CommandBase):
                 report_text = await self._call_anthropic(api_key, model, prompt, base_url)
             elif provider == "Google":
                 report_text = await self._call_google(api_key, model, prompt)
+            elif provider == "Kimi":
+                report_text = await self._call_openai_compatible(
+                    "https://api.moonshot.ai/v1", api_key, model, prompt)
             else:
                 raise Exception(f"Unknown provider: {provider}")
 
