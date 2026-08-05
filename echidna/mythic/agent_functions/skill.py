@@ -2,6 +2,7 @@ from mythic_container.MythicCommandBase import *
 from mythic_container.MythicRPC import *
 from mythic_container.MythicGoRPC.send_mythic_rpc_task_create import MythicRPCTaskCreateMessage as _OrigTaskCreateMessage
 import mythic_container
+import asyncio
 import aiohttp
 import json
 import os
@@ -542,13 +543,21 @@ class SkillCommand(CommandBase):
             response.TaskStatus = MythicStatus.Completed
             response.Completed = True
 
+        except (asyncio.TimeoutError, aiohttp.ServerTimeoutError):
+            response.Success = False
+            response.TaskStatus = MythicStatus.Error
+            response.Completed = True
+            await SendMythicRPCResponseCreate(MythicRPCResponseCreateMessage(
+                TaskID=taskData.Task.ID,
+                Response=f"[skill] Error: Skill timed out — the provider API may be unresponsive".encode()
+            ))
         except Exception as e:
             response.Success = False
             response.TaskStatus = MythicStatus.Error
             response.Completed = True
             await SendMythicRPCResponseCreate(MythicRPCResponseCreateMessage(
                 TaskID=taskData.Task.ID,
-                Response=f"[skill] Error: {str(e)}".encode()
+                Response=f"[skill] Error: {str(e) or type(e).__name__}".encode()
             ))
 
         finally:

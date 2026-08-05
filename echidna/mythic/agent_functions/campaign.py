@@ -227,6 +227,8 @@ class CampaignCommand(CommandBase):
                 skill_count = len(completed_skills)
                 state["paused_skill"] = None
 
+                approved_skill = skill_queue[0]
+
                 await SendMythicRPCResponseCreate(MythicRPCResponseCreateMessage(
                     TaskID=taskData.Task.ID,
                     Response=f"\n[campaign] Resuming — next skill: {skill_queue[0]}\n".encode()
@@ -247,6 +249,8 @@ class CampaignCommand(CommandBase):
                 campaign_context = state["context"]
                 skill_count = len(completed_skills)
                 state["paused_skill"] = None
+
+                approved_skill = None
 
                 await SendMythicRPCResponseCreate(MythicRPCResponseCreateMessage(
                     TaskID=taskData.Task.ID,
@@ -269,6 +273,7 @@ class CampaignCommand(CommandBase):
                 completed_skills = []
                 campaign_context = ""
                 skill_count = 0
+                approved_skill = None
 
                 # Header
                 mode_label = "AUTO" if auto_mode else "INTERACTIVE (use --resume / --skip to continue)"
@@ -304,8 +309,11 @@ class CampaignCommand(CommandBase):
                 # ── Approval gate ──
                 # In interactive mode (no --auto): pause before EVERY skill.
                 # In auto mode: pause only before dangerous skills.
+                # Skip the pause if this skill was just approved via --resume.
                 needs_pause = False
-                if not auto_mode:
+                if next_skill == approved_skill:
+                    approved_skill = None
+                elif not auto_mode:
                     needs_pause = True
                 elif next_skill in REQUIRES_APPROVAL:
                     needs_pause = True
