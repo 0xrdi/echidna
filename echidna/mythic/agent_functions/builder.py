@@ -47,7 +47,7 @@ No binary is generated - creates instant callback for chat operations.
                 "Which engine drives this callback. Anthropic = Claude Code (skills + "
                 "campaigns). OpenAI = Codex (skills + campaigns). Google = chat/model only. "
                 "Kimi = Moonshot AI (chat/model only). Custom = any OpenAI-compatible "
-                "endpoint; skills work if it also serves an agent wire — the build probes "
+                "endpoint; skills work if it also serves an agent protocol — the build probes "
                 "it and tells you."
             ),
             required=True,
@@ -103,13 +103,13 @@ No binary is generated - creates instant callback for chat operations.
             description="Moonshot AI (Kimi) API key.",
             required=False,
         ),
-        # ---- endpoints: one per wire, no API key required ----
+        # ---- endpoints: one per protocol, no API key required ----
         BuildParameter(
             name="anthropic_base_url",
             parameter_type=BuildParameterType.String,
             default_value="",
             description=(
-                "Your own endpoint serving the Anthropic /v1/messages wire — LiteLLM, "
+                "Your own endpoint serving the Anthropic /v1/messages protocol — LiteLLM, "
                 "one-api, new-api. Include /v1, e.g. http://10.0.0.5:4000/v1 (exactly what "
                 "`infreerence integrations` emits). No API key needed. Used when "
                 "provider=Anthropic: drives chat, model, report, skills and campaigns."
@@ -121,10 +121,10 @@ No binary is generated - creates instant callback for chat operations.
             parameter_type=BuildParameterType.String,
             default_value="",
             description=(
-                "Your own endpoint serving the OpenAI /v1 wire. Include /v1. Used when "
+                "Your own endpoint serving the OpenAI /v1 protocol. Include /v1. Used when "
                 "provider=OpenAI (Codex skills need /v1/responses — LiteLLM serves it) or "
                 "provider=Custom (plain /chat/completions is enough for chat). No API key "
-                "needed. Missing the wire? Run the `bridge` command on any callback for "
+                "needed. Missing the protocol? Run the `bridge` command on any callback for "
                 "setup instructions, with or without infreerence. "
                 "Point ONLY at an endpoint you own or are authorized to use."
             ),
@@ -167,7 +167,7 @@ No binary is generated - creates instant callback for chat operations.
 
             model = _p('model')
             # Each provider reads only its own two fields; the rest are ignored.
-            # Custom rides the OpenAI wire, so it shares that pair.
+            # Custom rides the OpenAI protocol, so it shares that pair.
             key_of = {"Anthropic": 'anthropic_key', "OpenAI": 'openai_key',
                       "Google": 'google_key', "Kimi": 'kimi_key',
                       "Custom": 'openai_key'}
@@ -206,7 +206,7 @@ No binary is generated - creates instant callback for chat operations.
                      f"Auth     : {key_field}" if not base_url else
                      f"Auth     : {'key supplied' if api_key != 'not-needed' else 'none (open endpoint)'}"]
 
-            # Which agent wire does this endpoint actually serve? Anthropic needs
+            # Which agent protocol does this endpoint actually serve? Anthropic needs
             # /v1/messages (Claude Code), OpenAI needs /v1/responses (Codex).
             # Recording it now means a skill fails fast with a real reason.
             wire = "chat"
@@ -217,17 +217,17 @@ No binary is generated - creates instant callback for chat operations.
                 wire, detail = await _detect_wire(provider, base_url, api_key, model)
                 engine = {"anthropic": "Claude Code", "openai": "Codex"}.get(wire)
                 if engine:
-                    lines.append(f"Wire     : {wire} — skills + campaigns ENABLED ({engine})")
+                    lines.append(f"Protocol : {wire} — skills + campaigns ENABLED ({engine})")
                 else:
                     want = "openai" if provider == "OpenAI" else "anthropic"
-                    lines.append(f"Wire     : chat only ({detail})")
+                    lines.append(f"Protocol : chat only ({detail})")
                     lines.append("           chat / model / report work; skills and "
                                  "campaigns do NOT.")
                     lines.append("")
                     lines.append(_bridge_guide(want, base_url))
             else:
                 wire = "vendor"
-                lines.append("Wire     : vendor API — skills + campaigns ENABLED")
+                lines.append("Protocol : vendor API — skills + campaigns ENABLED")
 
             await SendMythicRPCPayloadUpdatebuildStep(
                 MythicRPCPayloadUpdateBuildStepMessage(

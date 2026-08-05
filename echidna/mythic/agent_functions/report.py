@@ -156,7 +156,7 @@ class ReportCommand(CommandBase):
 
             # Call the LLM
             if provider in ("OpenAI", "Custom"):
-                # Custom has no Responses wire — report over plain chat/completions.
+                # Custom has no Responses protocol — report over plain chat/completions.
                 report_text = (await self._call_openai_compatible(base_url, api_key, model, prompt)
                                if provider == "Custom"
                                else await self._call_openai(api_key, model, prompt, base_url))
@@ -303,7 +303,7 @@ class ReportCommand(CommandBase):
                 return str(data)
 
     async def _call_openai_compatible(self, base_url, api_key, model, prompt):
-        """Plain /chat/completions — for Custom endpoints with no Responses wire."""
+        """Plain /chat/completions — for Custom endpoints with no Responses protocol."""
         base = (base_url or "").rstrip('/')
         headers = {"Authorization": f"Bearer {api_key or 'not-needed'}",
                    "Content-Type": "application/json"}

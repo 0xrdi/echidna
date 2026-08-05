@@ -405,11 +405,11 @@ class SkillCommand(CommandBase):
             if not task:
                 raise Exception("Task description is required")
             # Which toolbox engine drives this endpoint. A Custom endpoint that
-            # serves the Anthropic wire (LiteLLM and friends) runs skills directly;
+            # serves the Anthropic protocol (LiteLLM and friends) runs skills directly;
             # a chat-only one raises here with the bridge instructions.
             engine = await resolve_engine(provider, config)
 
-            # Kimi serves the Anthropic wire at api.moonshot.ai/anthropic
+            # Kimi serves the Anthropic protocol at api.moonshot.ai/anthropic
             if provider == "Kimi" and not base_url:
                 base_url = "https://api.moonshot.ai/anthropic/v1"
 

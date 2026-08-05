@@ -1,9 +1,9 @@
-"""Which agent wire does a configured endpoint speak?
+"""Which agent protocol does a configured endpoint speak?
 
 `chat`, `model` and `report` need only plain /chat/completions. Skills and
 campaigns are different: they spawn real coding agents in the toolbox — the
-Claude Code CLI over the Anthropic /v1/messages wire, or Codex over the OpenAI
-/v1/responses wire.
+Claude Code CLI over the Anthropic /v1/messages protocol, or Codex over the
+OpenAI /v1/responses protocol.
 
 The distinction that matters operationally is *gateway vs. raw server*:
 
@@ -11,8 +11,8 @@ The distinction that matters operationally is *gateway vs. raw server*:
     endpoint found with `infreerence` drives the entire kill chain — skills,
     campaigns, delegation — with nothing in between.
   * A raw inference server (vLLM, Ollama, llama.cpp, LocalAI) implements only
-    the OpenAI chat wire and is chat-only until something translates for it:
-    `infreerence bridge <scan_id> <ip:port> --run`.
+    the OpenAI chat protocol and is chat-only until something translates for
+    it: `infreerence bridge <scan_id> <ip:port> --run`.
 
 The payload build probes once and records the answer as `Wire:` in the callback
 config, so a skill task fails fast with a real reason instead of re-probing every
@@ -25,9 +25,10 @@ import aiohttp
 
 # What to tell an operator whose endpoint can't run skills.
 BRIDGE_HINT = (
-    "This endpoint speaks the OpenAI chat wire only, and skills need an agent "
-    "wire (Anthropic /v1/messages). Either point at a gateway that serves it "
-    "(LiteLLM, one-api, new-api), or front this one with a local bridge:\n"
+    "This endpoint speaks the OpenAI chat protocol only, and skills need an "
+    "agent protocol (Anthropic /v1/messages). Either point at a gateway that "
+    "serves it (LiteLLM, one-api, new-api), or front this one with a local "
+    "bridge:\n"
     "    infreerence bridge <scan_id> <ip:port> --run\n"
     "then rebuild the payload with base_url=http://127.0.0.1:4000/v1"
 )
@@ -54,7 +55,7 @@ def anthropic_root(base_url: str) -> str:
     """The ROOT of an endpoint carried OpenAI-style (…/v1).
 
     Anthropic clients append /v1/messages themselves, so the /v1 we carry for the
-    OpenAI wire has to come off or requests land on /v1/v1/messages.
+    OpenAI protocol has to come off or requests land on /v1/v1/messages.
     """
     root = (base_url or "").rstrip("/")
     return root[:-3].rstrip("/") if root.endswith("/v1") else root
@@ -85,10 +86,10 @@ async def serves_anthropic_wire(base_url: str, api_key: str, model: str = ""):
 
 
 async def serves_openai_responses_wire(base_url: str, api_key: str, model: str = ""):
-    """Does this endpoint answer POST /responses (the Codex wire)? -> (ok, detail).
+    """Does this endpoint answer POST /responses (the Codex protocol)? -> (ok, detail).
 
     base_url is carried OpenAI-style *with* /v1, and the Responses path hangs
-    directly off it — unlike the Anthropic wire, which needs the root.
+    directly off it — unlike the Anthropic protocol, which needs the root.
     """
     if not base_url:
         return False, "no base_url"
@@ -108,12 +109,12 @@ async def serves_openai_responses_wire(base_url: str, api_key: str, model: str =
 
 
 async def detect_wire(provider: str, base_url: str, api_key: str, model: str = ""):
-    """Which agent wire does this endpoint actually serve? -> (wire, detail).
+    """Which agent protocol does this endpoint actually serve? -> (wire, detail).
 
     ``wire`` is "anthropic" (Claude Code can drive it), "openai" (Codex can), or
     "chat" (neither — chat/model/report only). Each provider is probed for the
-    wire its own engine needs; Custom is probed for both, because a gateway that
-    serves either one can still run skills.
+    protocol its own engine needs; Custom is probed for both, because a gateway
+    that serves either one can still run skills.
     """
     if not base_url:
         return "chat", "no base_url"
@@ -136,7 +137,7 @@ async def detect_wire(provider: str, base_url: str, api_key: str, model: str = "
 
 def bridge_guide(want: str = "anthropic", base_url: str = "") -> str:
     """Copy-paste instructions for putting a LiteLLM bridge in front of an
-    endpoint that doesn't serve the agent wire ``want``.
+    endpoint that doesn't serve the agent protocol ``want``.
 
     Shared by the payload build step and the `bridge` command so the operator
     reads the same thing wherever they hit the wall.
@@ -148,9 +149,9 @@ def bridge_guide(want: str = "anthropic", base_url: str = "") -> str:
 ================================================================
  LiteLLM bridge — needed for: {wire_txt}
 ================================================================
-Your endpoint speaks the plain OpenAI chat wire. Skills spawn real coding
-agents, which need an agent wire. One local LiteLLM process translates: it
-fronts your endpoint and serves the OpenAI, Anthropic AND Gemini wires at
+Your endpoint speaks the plain OpenAI chat protocol. Skills spawn real coding
+agents, which need an agent protocol. One local LiteLLM process translates: it
+fronts your endpoint and serves the OpenAI, Anthropic AND Gemini protocols at
 once, on 127.0.0.1:4000.
 
 --- WITH infreerence (one command) ---------------------------------
@@ -187,7 +188,7 @@ Verify it first:
     -H 'content-type: application/json' \\
     {"-H 'anthropic-version: 2023-06-01' " if want == "anthropic" else ""}\\
     -d '{"..."}'
-  200 = the wire is live.
+  200 = the protocol is live.
 
 NOTE: the bridge listens on loopback. If Mythic runs in Docker, 127.0.0.1
 inside the echidna container is NOT your host — use the host's LAN IP (or
@@ -213,10 +214,10 @@ async def resolve_engine(provider: str, config: dict) -> str:
     if provider == "Kimi":
         return "Anthropic"
     if provider in ("Anthropic", "OpenAI"):
-        # No override: the vendor API always speaks its own agent wire.
+        # No override: the vendor API always speaks its own agent protocol.
         if not base_url:
             return provider
-        # Overridden: the endpoint has to actually serve that wire, so fail here
+        # Overridden: the endpoint has to actually serve that protocol, so fail here
         # with instructions rather than mid-skill with a 404.
         want = "anthropic" if provider == "Anthropic" else "openai"
         wire = (config.get("Wire") or "").strip().lower()

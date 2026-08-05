@@ -1,6 +1,6 @@
 """`bridge` — show how to put a LiteLLM bridge in front of an endpoint.
 
-Skills and campaigns spawn real coding agents, which speak an *agent* wire:
+Skills and campaigns spawn real coding agents, which speak an *agent protocol*:
 Claude Code wants Anthropic /v1/messages, Codex wants OpenAI /v1/responses. A
 raw inference server offers neither. This command prints the setup guide — with
 infreerence (one command) and without it (hand-rolled config) — and, when run on
@@ -37,7 +37,7 @@ class BridgeArguments(TaskArguments):
                 cli_name="wire",
                 display_name="Wire",
                 type=ParameterType.String,
-                description="Which agent wire you need: 'anthropic' (Claude Code skills) "
+                description="Which agent protocol you need: 'anthropic' (Claude Code skills) "
                             "or 'openai' (Codex skills). Omit to detect from this callback.",
                 parameter_group_info=[ParameterGroupInfo(required=False)],
             ),
@@ -56,7 +56,7 @@ class BridgeCommand(CommandBase):
     needs_admin = False
     help_cmd = "bridge [anthropic|openai]"
     description = ("Show how to set up a LiteLLM bridge so skills/campaigns can drive "
-                   "an endpoint that only speaks the plain OpenAI chat wire.")
+                   "an endpoint that only speaks the plain OpenAI chat protocol.")
     version = 1
     author = "@operator"
     argument_class = BridgeArguments
@@ -84,7 +84,7 @@ class BridgeCommand(CommandBase):
             elif asked in ("openai", "codex", "responses"):
                 want = "openai"
             else:
-                # Default to the wire THIS callback's engine needs.
+                # Default to the protocol THIS callback's engine needs.
                 want = "openai" if provider == "OpenAI" else "anthropic"
 
             out = []
@@ -94,15 +94,15 @@ class BridgeCommand(CommandBase):
                 recorded = (config.get('Wire') or '').lower()
                 out.append(f"Endpoint : {base_url}")
                 out.append(f"Provider : {provider}"
-                           + (f"   (recorded wire: {recorded})" if recorded else ""))
+                           + (f"   (recorded protocol: {recorded})" if recorded else ""))
                 if wire == "anthropic":
-                    out.append("Live probe: serves the Anthropic /v1/messages wire — "
+                    out.append("Live probe: serves the Anthropic /v1/messages protocol — "
                                "Claude Code skills work against it as-is.")
                 elif wire == "openai":
-                    out.append("Live probe: serves the OpenAI /v1/responses wire — "
+                    out.append("Live probe: serves the OpenAI /v1/responses protocol — "
                                "Codex skills work against it as-is.")
                 else:
-                    out.append(f"Live probe: chat wire only ({detail})")
+                    out.append(f"Live probe: chat protocol only ({detail})")
                 if wire == want:
                     out.append("")
                     out.append("No bridge needed for this callback. The guide below is "

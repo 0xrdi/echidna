@@ -8,7 +8,7 @@ def _anthropic_root(base_url: str) -> str:
     """Strip a trailing /v1 so the Anthropic path can be appended cleanly.
 
     base_url is carried OpenAI-style (…/v1) because that is what
-    `infreerence integrations` emits, but the Anthropic wire is /v1/messages off
+    `infreerence integrations` emits, but the Anthropic protocol is /v1/messages off
     the ROOT — without this you get /v1/v1/messages.
     """
     root = (base_url or "").rstrip('/')
@@ -142,7 +142,7 @@ class ChatCommand(CommandBase):
         return response
 
     async def _call_openai(self, api_key: str, model: str, message: str, base_url: str = "") -> str:
-        """Call the OpenAI Responses API, or a bridge serving that wire.
+        """Call the OpenAI Responses API, or a bridge serving that protocol.
 
         base_url carries /v1, so /responses is appended directly.
         """
@@ -173,7 +173,7 @@ class ChatCommand(CommandBase):
                     return str(data)
 
     async def _call_anthropic(self, api_key: str, model: str, message: str, base_url: str = "") -> str:
-        """Call the Anthropic Messages API, or a bridge serving that wire."""
+        """Call the Anthropic Messages API, or a bridge serving that protocol."""
         url = (f"{_anthropic_root(base_url)}/v1/messages" if base_url
                else "https://api.anthropic.com/v1/messages")
         headers = {

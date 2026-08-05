@@ -189,12 +189,13 @@ class SkillRunRequest(BaseModel):
 # Endpoint overrides for the agent SDKs.
 #
 # The skill engines do NOT speak plain /chat/completions: claude-agent-sdk talks
-# the Anthropic /v1/messages wire and the Codex SDK talks the OpenAI /v1/responses
-# wire. A raw inference server implements neither — but a gateway usually does:
-# LiteLLM (and one-api / new-api) serve /v1/messages natively, so a discovered
-# gateway can drive skills with no bridge in between. Echidna resolves which wire
-# an endpoint speaks before it gets here and sends the matching provider; the
-# "Custom" fallback below is for direct callers of this API.
+# the Anthropic /v1/messages protocol and the Codex SDK talks the OpenAI
+# /v1/responses protocol. A raw inference server implements neither — but a
+# gateway usually does: LiteLLM (and one-api / new-api) serve /v1/messages
+# natively, so a discovered gateway can drive skills with no bridge in between.
+# Echidna resolves which protocol an endpoint speaks before it gets here and
+# sends the matching provider; the "Custom" fallback below is for direct callers
+# of this API.
 # ------------------------------------------------------------------
 def _sdk_env(req) -> dict:
     """Environment for claude-agent-sdk (spawns the Claude Code CLI).
@@ -368,15 +369,15 @@ async def run_skill(req: SkillRunRequest):
     skill = SKILL_REGISTRY[req.skill_id]
 
     # Validate provider support. "Custom" means an OpenAI-compatible endpoint that
-    # Echidna already confirmed speaks the Anthropic wire (LiteLLM and the one-api /
-    # new-api gateways serve /v1/messages themselves), so it runs on the Claude
-    # engine — it just needs the endpoint to talk to.
+    # Echidna already confirmed speaks the Anthropic protocol (LiteLLM and the
+    # one-api / new-api gateways serve /v1/messages themselves), so it runs on the
+    # Claude engine — it just needs the endpoint to talk to.
     if req.provider == "Custom":
         if not req.base_url:
             return JSONResponse(
                 status_code=400,
                 content={"error": "Provider 'Custom' requires base_url (the endpoint that "
-                                  "serves the Anthropic /v1/messages wire)."}
+                                  "serves the Anthropic /v1/messages protocol)."}
             )
         req.provider = "Anthropic"
     # A bare endpoint needs a concrete model name: unset, the CLI falls back to

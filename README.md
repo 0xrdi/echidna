@@ -10,6 +10,10 @@
 
 ---
 
+> **Legal & Authorized Use Only** — Echidna is provided for authorized security testing, research, and educational purposes only. You may only use it against systems you own or have explicit written authorization to test. The authors assume no liability for misuse or unauthorized activity. Unauthorized access to computer systems is illegal under laws including the CFAA, Computer Misuse Act, and equivalent legislation in your jurisdiction. **The authors do not condone, support, or encourage any illegal activity.**
+
+---
+
 Echidna is a virtual agent for [Mythic C2](https://github.com/its-a-feature/Mythic) that turns LLMs into red team operators. No binary, no target host — it creates instant callbacks that run AI skill agents through Mythic's interface, each scope-isolated with strict tool policies and the ability to delegate commands to real implants.
 
 ## Installation
@@ -27,9 +31,9 @@ sudo docker compose up -d --build
 |----------|:------:|---------------|-------------|
 | Anthropic | Yes (Claude Code) | `claude-opus-4-6` | `anthropic_key` or `anthropic_base_url` |
 | OpenAI | Yes (Codex) | `gpt-5` | `openai_key` or `openai_base_url` |
-| Kimi | Yes (via Anthropic wire) | `kimi-k3` | `kimi_key` |
+| Kimi | Yes (via Anthropic protocol) | `kimi-k3` | `kimi_key` |
 | Google | Chat only | `gemini-2.5-flash` | `google_key` |
-| Custom | If endpoint serves an agent wire | first listed | `openai_base_url` |
+| Custom | If endpoint serves an agent protocol | first listed | `openai_base_url` |
 
 Each provider needs **either** an API key **or** a base URL, not both. Kimi skills route through Moonshot's Anthropic-compatible endpoint (`api.moonshot.ai/anthropic`) automatically.
 
@@ -119,7 +123,7 @@ echidna/
 │   ├── chat.py             # LLM API integration (Anthropic, OpenAI, Google, Kimi)
 │   ├── skill.py            # Skill engine (isolation + delegation + reporting)
 │   ├── campaign.py         # Campaign orchestrator
-│   ├── wire.py             # Agent wire detection & engine resolution
+│   ├── wire.py             # Agent protocol detection & engine resolution
 │   ├── bridge.py           # LiteLLM bridge setup guide
 │   ├── delegate_server.py  # Delegation bridge (port 6790)
 │   ├── model.py            # Model management
@@ -135,7 +139,7 @@ echidna/
 
 ## Custom Endpoints
 
-`Custom` points Echidna at any OpenAI-compatible endpoint. Skills work if it also serves an agent wire (Anthropic `/v1/messages` or OpenAI `/v1/responses`) — the build step probes and tells you. Gateways like LiteLLM serve the wire natively; raw inference servers (vLLM, Ollama) need a bridge:
+`Custom` points Echidna at any OpenAI-compatible endpoint. Skills work if it also serves an agent protocol (Anthropic `/v1/messages` or OpenAI `/v1/responses`) — the build step probes and tells you. Gateways like LiteLLM serve the protocol natively; raw inference servers (vLLM, Ollama) need a bridge:
 
 ```bash
 infreerence bridge <scan_id> <ip:port> --run

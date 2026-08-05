@@ -109,8 +109,8 @@ class ModelCommand(CommandBase):
                     )
 
                 # Rewrite only Model and keep every other key. Rebuilding the
-                # string from scratch used to drop BaseURL's companions — Wire
-                # (which gates skills), plus IsSubAgent / DelegateSession /
+                # string from scratch used to drop BaseURL's companions — the
+                # protocol key (which gates skills), plus IsSubAgent / DelegateSession /
                 # SocksPort on a sub-agent callback.
                 config['Model'] = new_model
                 new_config = "|".join(f"{k}:{v}" for k, v in config.items())
