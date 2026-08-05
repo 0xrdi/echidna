@@ -67,19 +67,34 @@ Each provider needs **either** an API key **or** a base URL, not both. Kimi skil
 | `lateral-movement` | Lateral | — |
 | `data-exfil` | Exfil | — |
 
-```bash
-# Standalone skill
-skill passive-recon Enumerate subdomains for acme.corp
+### Running Skills
 
-# Skill delegating to a real implant
+```bash
+# Passive recon (standalone)
+skill passive-recon Enumerate subdomains and tech stack for acme.corp
+
+# Post-exploitation via delegation to a Merlin implant
 skill post-exploitation --callback 19 Full host enumeration
 
-# Campaign with approval gates
-campaign --callback 19 Full assessment of acme.corp
-campaign --resume
+# Active recon through SOCKS proxy
+skill active-recon --callback 5 --port 7001 Scan 10.0.0.0/24 for web services
+
+# Campaign: chains skills with approval gates between each step
+campaign --callback 19 Full assessment of sentry.security
+campaign --resume    # continue after reviewing
+campaign --skip      # skip a queued skill
+
+# Auto mode: runs without pausing (still pauses before dangerous skills)
+campaign --auto --callback 19 Full assessment of sentry.security
 ```
 
-Every skill writes structured JSON uploaded to Mythic's Files tab, renders a formatted report in task output, and registers key findings (credentials, escalation paths, domains) as Mythic artifacts.
+### Output
+
+Every skill writes structured JSON (`output.json`) with findings and recommendations. Echidna delivers results three ways:
+
+1. **Formatted report** — Aligned tables rendered in the Mythic task output
+2. **JSON file** — Uploaded to Mythic's Files tab as `{skill_id}_output.json`
+3. **Artifacts** — Key findings (credentials, escalation paths, domains, cloud assets) registered as Mythic artifacts
 
 ### Adding Custom Skills
 
