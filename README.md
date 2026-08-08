@@ -154,4 +154,5 @@ MIT — see [LICENSE](LICENSE).
 
 ## Acknowledgements
 
+- [Infreerence](https://github.com/armendgashi-sentry/infreerence) by armendgashi-sentry
 - [Mythic C2](https://github.com/its-a-feature/Mythic) by its-a-feature
