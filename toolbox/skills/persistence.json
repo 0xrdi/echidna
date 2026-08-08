@@ -1,0 +1,112 @@
+{
+  "id": "persistence",
+  "name": "Persistence Agent",
+  "version": "1.0",
+  "description": "Install persistence mechanisms on compromised hosts, selecting techniques based on OS, privilege level, and EDR presence.",
+  "mitre_techniques": [
+    "T1053",
+    "T1136",
+    "T1543",
+    "T1547",
+    "T1574",
+    "T1098"
+  ],
+  "allowed_binaries": [
+    "cat",
+    "jq",
+    "head",
+    "tail",
+    "grep",
+    "python3",
+    "curl"
+  ],
+  "allow_proxy": false,
+  "allow_delegate": true,
+  "allow_file_write": true,
+  "allow_file_read": true,
+  "requires_proxy": false,
+  "requires_callback_access": true,
+  "output_schema": {
+    "type": "object",
+    "required": [
+      "skill",
+      "target",
+      "status",
+      "findings"
+    ],
+    "properties": {
+      "skill": {
+        "type": "string",
+        "const": "persistence"
+      },
+      "target": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "complete",
+          "partial",
+          "error"
+        ]
+      },
+      "findings": {
+        "type": "object",
+        "properties": {
+          "mechanisms_installed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "technique": {
+                  "type": "string"
+                },
+                "mitre_id": {
+                  "type": "string"
+                },
+                "location": {
+                  "type": "string"
+                },
+                "trigger": {
+                  "type": "string"
+                },
+                "survives_reboot": {
+                  "type": "boolean"
+                },
+                "detection_risk": {
+                  "type": "string"
+                },
+                "cleanup_commands": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "evidence": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "recommendations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "next_skill": {
+              "type": "string"
+            },
+            "priority": {
+              "type": "string"
+            },
+            "rationale": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

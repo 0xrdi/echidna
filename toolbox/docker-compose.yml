@@ -1,0 +1,6 @@
+services:
+  toolbox:
+    build: .
+    container_name: toolbox
+    network_mode: host
+    restart: unless-stopped
