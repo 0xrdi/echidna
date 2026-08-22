@@ -77,6 +77,7 @@ The LLM decides when to call tools based on the conversation. It will not fabric
 | `/help` | Show version, available tools, and usage examples |
 | `/callbacks` | List active callbacks directly (bypasses the LLM) |
 | `/playbooks` | List available playbooks with descriptions |
+| `/reset` | Clear conversation context — LLM starts fresh, messages stay in UI |
 
 ## Playbooks
 
@@ -99,6 +100,29 @@ Playbooks are specialized system prompts that focus the LLM on a specific kill c
 | `data-exfil` | Exfil | Identify, stage, and exfiltrate high-value data |
 
 Each playbook enforces scope constraints (e.g. post-exploitation is read-only, exploitation-executor follows the approved plan only) and instructs the LLM on which Mythic tools to use at each step. Playbook prompts are stored as `.md` files in `echidna/mythic/agent_functions/playbooks/` — add your own by dropping a new file there.
+
+## Command Approval
+
+By default, Echidna requires operator approval before executing commands on callbacks. When the LLM calls `execute_command`, the agentic loop pauses and presents an **Approve / Deny** prompt with the full command and target callback. The LLM cannot interact with implants without explicit operator consent.
+
+- **Approve** — the command runs, output is fed back to the LLM, and the agentic loop continues (tagging, analysis, follow-up)
+- **Deny** — the command is not executed, the LLM is informed of the denial and adjusts
+
+Only `execute_command` requires approval. Other tools (`list_callbacks`, `credential_create`, `create_artifact`, `event_log`, `tag_task`) execute without prompting.
+
+### Bypassing Approval
+
+Two ways to skip the approval prompt:
+
+- **Per-message** — prefix your message with `--dangerous`:
+  ```
+  --dangerous run whoami on callback #1
+  ```
+  Works with regular messages and slash commands (e.g. `/post-exploitation --dangerous enumerate the host`).
+
+- **Per-channel** — set **Command Approval** to **Disabled** in the channel settings. All commands execute without prompting until re-enabled.
+
+The channel metadata badge shows **Approval: On** or **Approval: Off** to reflect the current state.
 
 ## Mythic Tools
 
