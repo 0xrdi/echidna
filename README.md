@@ -81,7 +81,7 @@ The LLM decides when to call tools based on the conversation. It will not fabric
 
 ## Playbooks
 
-Playbooks are specialized system prompts that focus the LLM on a specific kill chain phase. Select a playbook in the channel settings dropdown — it injects phase-specific constraints, methodology, and tool usage guidance into the system prompt alongside the base Echidna prompt.
+Playbooks are specialized system prompts that focus the LLM on a specific kill chain phase. Activate a playbook with its slash command (e.g. `/post-exploitation enumerate the host`) — it injects phase-specific constraints, methodology, and tool usage guidance into the system prompt for that message. For persistent activation, select a playbook in the channel settings dropdown.
 
 | Playbook | Phase | Description |
 |----------|-------|-------------|
