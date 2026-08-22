@@ -1,7 +1,7 @@
 # Echidna
 
 <p align="center">
-  <img src="echidna.svg" alt="Echidna Logo" width="150" height="150">
+  <img src="echidna/mythic/agent_functions/echidna.svg" alt="Echidna Logo" width="150" height="150">
 </p>
 
 <p align="center">
@@ -10,143 +10,141 @@
 
 ---
 
-> **Legal & Authorized Use Only** — Echidna is provided for authorized security testing, research, and educational purposes only. You may only use it against systems you own or have explicit written authorization to test. The authors assume no liability for misuse or unauthorized activity. Unauthorized access to computer systems is illegal under laws including the CFAA, Computer Misuse Act, and equivalent legislation in your jurisdiction. **The authors do not condone, support, or encourage any illegal activity.**
+> **Authorized Use Only** — Echidna is provided for authorized security testing, research, and educational purposes only. You may only use it against systems you own or have explicit written authorization to test. The authors assume no liability for misuse or unauthorized activity. Unauthorized access to computer systems is illegal under laws including the CFAA, Computer Misuse Act, and equivalent legislation in your jurisdiction.
 
 ---
 
-Echidna is a virtual agent for [Mythic C2](https://github.com/its-a-feature/Mythic) that turns LLMs into red team operators. No binary, no target host — it creates instant callbacks that run AI skill agents through Mythic's interface, each scope-isolated with strict tool policies and the ability to delegate commands to real implants.
+Echidna is a Chat container for [Mythic C2](https://github.com/its-a-feature/Mythic) (v4.0+) that turns LLMs into red team operators. It provides an agentic chat interface with native Mythic tool use — the LLM can execute commands on implants, store credentials, log OPSEC artifacts, write to the operation timeline, and tag tasks with MITRE ATT&CK techniques. No binary, no payload. The entire agent is a single Chat container that registers with Mythic and operates through its chat framework.
+
+## Requirements
+
+- **Mythic C2 v4.0+** with Chat container support
+- **mythic-container** Python library `>=0.7.0rc9`
+- An API key for at least one supported LLM provider (or a self-hosted endpoint)
 
 ## Installation
 
 ```bash
 sudo ./mythic-cli install github https://github.com/0xrdi/echidna.git
-
-cd InstalledServices/echidna/toolbox
-sudo docker compose up -d --build
 ```
+
+After installation, Echidna appears in Mythic's Chat sidebar. Create a new channel, select the `echidna` model, and configure your provider and API key in the channel settings.
 
 ## Providers
 
-| Provider | Skills | Default Model | Build field |
-|----------|:------:|---------------|-------------|
-| Anthropic | Yes (Claude Code) | `claude-opus-4-6` | `anthropic_key` or `anthropic_base_url` |
-| OpenAI | Yes (Codex) | `gpt-5` | `openai_key` or `openai_base_url` |
-| Kimi | Yes (via Anthropic protocol) | `kimi-k3` | `kimi_key` |
-| Google | Chat only | `gemini-2.5-flash` | `google_key` |
-| Custom | If endpoint serves an agent protocol | first listed | `openai_base_url` |
+| Provider | Tool Use | Default Model | Config |
+|----------|:--------:|---------------|--------|
+| Anthropic | Yes | `claude-sonnet-4-20250514` | API key or `anthropic_base_url` |
+| OpenAI | Yes | `gpt-4o` | API key or `openai_base_url` |
+| Kimi | Yes | `kimi-k3` | API key |
+| Google | Coming soon | `gemini-2.5-flash` | API key |
+| Custom | Yes | auto-detected | `openai_base_url` (required) |
 
-Each provider needs **either** an API key **or** a base URL, not both. Kimi skills route through Moonshot's Anthropic-compatible endpoint (`api.moonshot.ai/anthropic`) automatically.
+Each provider needs **either** an API key **or** a base URL, not both:
 
-## Commands
+- **API key** — uses the vendor's hosted API directly.
+- **Base URL** — points at a self-hosted OpenAI-compatible endpoint (LiteLLM, one-api, new-api, vLLM, Ollama). No API key required. The URL must include `/v1` (e.g. `http://10.0.0.5:4000/v1`).
+
+Google tool use support is coming soon — currently chat-only (no function calling).
+
+### API Key Resolution
+
+Echidna resolves the API key in this order:
+
+1. **Channel config** — the `api_key` field in the channel settings
+2. **User secrets** — Mythic's per-user secret store (`anthropic_api_key`, `openai_api_key`, `google_api_key`, `kimi_api_key`)
+3. **Keyless** — if a `base_url` is set and no key is found, requests are sent without authentication
+
+### AI Chat API Token
+
+Mythic v4 supports scoped API tokens for Chat containers. Configure the channel's AI Chat API Token to allow Echidna to mint scoped Mythic API tokens at runtime (used by `tag_task` to call the GraphQL API). The token must include `apitoken.write` and `chat-ai.write` permissions.
+
+## Chat Interface
+
+Echidna operates through Mythic's Chat container framework. Configure a channel with your provider, model, and API key, then chat naturally:
+
+- *"list callbacks"* — queries Mythic for active implants
+- *"run whoami on callback #1"* — executes a command via the implant
+- *"check /etc/shadow on callback #3"* — reads and analyzes command output
+- *"what lateral movement options do I have?"* — general offensive security discussion (no tools needed)
+
+The LLM decides when to call tools based on the conversation. It will not fabricate data — if it hasn't called a tool, it says so. Commands are executed one at a time, and only confirmed output is reported.
+
+### Slash Commands
 
 | Command | Description |
 |---------|-------------|
-| `chat <message>` | Chat with the LLM |
-| `model [name]` | List or switch models |
-| `skill <id> [--callback <id>] <task>` | Run a skill agent |
-| `skills` | List available skills |
-| `campaign [--auto] [--callback <id>] <objective>` | Auto-chain skills with approval gates |
-| `report [--format md\|html]` | Generate findings report |
-| `bridge [anthropic\|openai]` | Probe endpoint and print bridge setup |
-| `jobs [stop <id>]` | List or stop active jobs |
-| `exit` | Deactivate callback |
+| `/help` | Show version, available tools, and usage examples |
+| `/callbacks` | List active callbacks directly (bypasses the LLM) |
 
-## Skills
+## Mythic Tools
 
-13 skill agents covering the full kill chain. Each is isolated at three layers: **tool policy** (container sandboxing), **network policy** (proxy/delegation access), and **system prompt** (hard constraints).
+Six tools are registered with the LLM as function definitions. The LLM calls them automatically based on conversation context. Each tool call is rendered as a collapsible card in the chat with input parameters and output.
 
-| Skill | Phase | Proxy |
-|-------|-------|:-----:|
-| `passive-recon` | Recon | — |
-| `active-recon` | Recon | Yes |
-| `attack-surface-analyzer` | Analysis | — |
-| `exploitation-planner` | Planning | — |
-| `exploitation-executor` | Exploitation | Yes |
-| `post-exploitation` | Post-Exploit | — |
-| `privilege-escalation` | Escalation | — |
-| `credential-validation` | Validation | Yes |
-| `cloud-enumeration` | Cloud | Yes |
-| `persistence` | Persistence | — |
-| `edr-bypass` | Evasion | — |
-| `lateral-movement` | Lateral | — |
-| `data-exfil` | Exfil | — |
+| Tool | Description |
+|------|-------------|
+| `list_callbacks` | List active implants (callback ID, host, user, payload type, IP, OS, process) |
+| `execute_command` | Run a command on a callback by display ID. Waits for completion (120s timeout) and returns output. Returns the `task_display_id` for use with `tag_task`. |
+| `credential_create` | Store a credential in Mythic (plaintext, hash, ticket, certificate, token, key). Requires `account` and `credential` fields. |
+| `create_artifact` | Log an OPSEC artifact (file, registry key, service, scheduled task, etc.) with optional cleanup flag. |
+| `event_log` | Write an entry to the operation event log. Supports `info` and `warning` levels. |
+| `tag_task` | Tag a completed task with a MITRE ATT&CK technique ID (e.g. `T1059.004`). Uses the native `addAttackToTask` GraphQL mutation — tagged tasks appear on Mythic's MITRE ATT&CK dashboard. |
 
-### Running Skills
+### Agentic Loop
 
-```bash
-# Passive recon (standalone)
-skill passive-recon Enumerate subdomains and tech stack for acme.corp
+The LLM runs in an agentic loop with up to **15 tool rounds** per message. In each round:
 
-# Post-exploitation via delegation to a Merlin implant
-skill post-exploitation --callback 19 Full host enumeration
+1. The full conversation (including prior tool results) is sent to the LLM
+2. If the LLM returns tool calls, each tool is executed via Mythic RPC
+3. Tool results are appended to the conversation and the next round begins
+4. If the LLM returns text without tool calls, the response is sent to the operator and the loop ends
 
-# Active recon through SOCKS proxy
-skill active-recon --callback 5 --port 7001 Scan 10.0.0.0/24 for web services
+Both Anthropic and OpenAI providers use **streaming SSE** — responses appear incrementally. Google uses a single request/response cycle (no streaming, no tools).
 
-# Campaign: chains skills with approval gates between each step
-campaign --callback 19 Full assessment of sentry.security
-campaign --resume    # continue after reviewing
-campaign --skip      # skip a queued skill
+### ATT&CK Tagging
 
-# Auto mode: runs without pausing (still pauses before dangerous skills)
-campaign --auto --callback 19 Full assessment of sentry.security
-```
+After executing a command, the LLM automatically tags the task with the relevant ATT&CK technique. `tag_task` works by:
 
-### Output
+1. Minting a scoped API token via `SendMythicRPCAPITokenCreate` (uses the channel's configured API token — no hardcoded credentials)
+2. Calling the `addAttackToTask(t_num, task_display_id)` GraphQL mutation on `mythic_nginx:7443`
+3. The technique ID is validated against the pattern `Tnnnn` or `Tnnnn.nnn` before the request
 
-Every skill writes structured JSON (`output.json`) with findings and recommendations. Echidna delivers results three ways:
-
-1. **Formatted report** — Aligned tables rendered in the Mythic task output
-2. **JSON file** — Uploaded to Mythic's Files tab as `{skill_id}_output.json`
-3. **Artifacts** — Key findings (credentials, escalation paths, domains, cloud assets) registered as Mythic artifacts
-
-### Adding Custom Skills
-
-Create `toolbox/skills/my_skill.json` (tool policy + output schema) and `toolbox/skills/prompts/my-skill.md` (system prompt), then restart the toolbox.
-
-## Delegation Bridge
-
-Skill agents execute commands on real implants (Apollo, Poseidon, Merlin, etc.) via the delegation bridge:
-
-```
-Skill Agent (toolbox) → POST :6790/delegate → Delegate Server → Mythic RPC → implant
-```
-
-Works with any Mythic agent. Synchronous (120s timeout), auto-detects payload type.
+Tagged tasks appear on Mythic's MITRE ATT&CK dashboard, providing automatic coverage mapping during an operation.
 
 ## Architecture
 
 ```
 echidna/
-├── echidna/mythic/agent_functions/
-│   ├── builder.py          # PayloadType & callback creation
-│   ├── chat.py             # LLM API integration (Anthropic, OpenAI, Google, Kimi)
-│   ├── skill.py            # Skill engine (isolation + delegation + reporting)
-│   ├── campaign.py         # Campaign orchestrator
-│   ├── wire.py             # Agent protocol detection & engine resolution
-│   ├── bridge.py           # LiteLLM bridge setup guide
-│   ├── delegate_server.py  # Delegation bridge (port 6790)
-│   ├── model.py            # Model management
-│   ├── rpc.py              # Mythic RPC helpers
-│   └── exit.py             # Callback deactivation
-└── toolbox/
-    ├── server.py            # FastAPI: skill engine, tool policy, streaming
-    └── skills/
-        ├── *.json           # 13 skill configs
-        └── prompts/*.md     # 13 skill prompts
-
+├── main.py                              # Entry point
+├── Dockerfile                           # Container image
+├── config.json                          # Mythic container config
+└── echidna/mythic/agent_functions/
+    └── echidna_chat.py                  # Chat container — agentic loop, tools, streaming
 ```
+
+The entire agent is a single Python file. `echidna_chat.py` defines the `EchidnaChat` class, which subclasses `Chat` from `mythic_container.ChatBase`. On startup, `mythic_container.mythic_service.start_and_run_forever()` discovers and registers it with Mythic's RabbitMQ message bus.
+
+### Key Components
+
+- **`EchidnaChat.chat()`** — entry point for every message. Resolves provider config, dispatches to the provider-specific agentic loop.
+- **`_agentic_anthropic()`** — streams Anthropic API responses (SSE `content_block_start/delta/stop` events), handles tool use blocks, feeds results back as `tool_result` messages.
+- **`_agentic_openai()`** — streams OpenAI-compatible responses (SSE `data:` lines), accumulates `tool_calls` deltas by index, feeds results back as `tool` role messages.
+- **`_chat_google()`** — single-shot request to Google's `generateContent` API. Tool support coming soon.
+- **`_execute_tool()`** — dispatcher that routes tool calls to the corresponding `_tool_*` method.
+- **`_send_tool_card()`** — renders tool calls as collapsible subagent-style cards in the Mythic chat UI.
+
+### Internal Networking
+
+Echidna runs as a Docker container in Mythic's internal network. Tool calls that need Mythic data use RPC over RabbitMQ (`SendMythicRPC*` functions). The `tag_task` tool is the only one that makes an HTTP request — to `https://mythic_nginx:7443/graphql/` (the internal Nginx reverse proxy), because no RPC exists for ATT&CK task mapping.
 
 ## Custom Endpoints
 
-`Custom` points Echidna at any OpenAI-compatible endpoint. Skills work if it also serves an agent protocol (Anthropic `/v1/messages` or OpenAI `/v1/responses`) — the build step probes and tells you. Gateways like LiteLLM serve the protocol natively; raw inference servers (vLLM, Ollama) need a bridge:
+Select the **Custom** provider and set `openai_base_url` to point at any OpenAI-compatible endpoint. Works with:
 
-```bash
-infreerence bridge <scan_id> <ip:port> --run
-# then build with openai_base_url = http://127.0.0.1:4000/v1
-```
+- **Gateways**: LiteLLM, one-api, new-api (serve multiple protocols, handle model routing)
+- **Inference servers**: vLLM, Ollama, llama.cpp, LocalAI (serve `/v1/chat/completions` directly)
 
-The `bridge` command on any callback reprints the setup guide on demand.
+The endpoint must support **function calling** (tool use) for Echidna's tools to work. Without it, the LLM can still chat but cannot interact with Mythic.
 
 ## License
 
@@ -155,3 +153,4 @@ MIT — see [LICENSE](LICENSE).
 ## Acknowledgements
 
 - [Mythic C2](https://github.com/its-a-feature/Mythic) by its-a-feature
+- [infreerence](https://github.com/aremndgashi-infreerence) — endpoint discovery and gateway bridging for self-hosted LLMs
