@@ -76,6 +76,29 @@ The LLM decides when to call tools based on the conversation. It will not fabric
 |---------|-------------|
 | `/help` | Show version, available tools, and usage examples |
 | `/callbacks` | List active callbacks directly (bypasses the LLM) |
+| `/playbooks` | List available playbooks with descriptions |
+
+## Playbooks
+
+Playbooks are specialized system prompts that focus the LLM on a specific kill chain phase. Select a playbook in the channel settings dropdown — it injects phase-specific constraints, methodology, and tool usage guidance into the system prompt alongside the base Echidna prompt.
+
+| Playbook | Phase | Description |
+|----------|-------|-------------|
+| `passive-recon` | Recon | OSINT-only reconnaissance through public sources |
+| `active-recon` | Recon | Port scanning, service fingerprinting, vulnerability detection |
+| `attack-surface-analyzer` | Analysis | Prioritized attack plan mapped to MITRE ATT&CK |
+| `exploitation-planner` | Planning | Detailed exploitation plans with commands and fallbacks |
+| `exploitation-executor` | Exploitation | Execute pre-approved plan steps with success/failure tracking |
+| `post-exploitation` | Post-Exploit | Read-only host enumeration via implant |
+| `privilege-escalation` | Escalation | Escalate using confirmed paths from prior enumeration |
+| `credential-validation` | Validation | Test recovered credentials against target services |
+| `cloud-enumeration` | Cloud | Enumerate AWS/GCP/Azure resources with recovered credentials |
+| `persistence` | Persistence | Install persistence with full cleanup documentation |
+| `edr-bypass` | Evasion | Analyze and temporarily bypass endpoint detection |
+| `lateral-movement` | Lateral | Move to new hosts using discovered credentials |
+| `data-exfil` | Exfil | Identify, stage, and exfiltrate high-value data |
+
+Each playbook enforces scope constraints (e.g. post-exploitation is read-only, exploitation-executor follows the approved plan only) and instructs the LLM on which Mythic tools to use at each step. Playbook prompts are stored as `.md` files in `echidna/mythic/agent_functions/playbooks/` — add your own by dropping a new file there.
 
 ## Mythic Tools
 
@@ -119,7 +142,8 @@ echidna/
 ├── Dockerfile                           # Container image
 ├── config.json                          # Mythic container config
 └── echidna/mythic/agent_functions/
-    └── echidna_chat.py                  # Chat container — agentic loop, tools, streaming
+    ├── echidna_chat.py                  # Chat container — agentic loop, tools, streaming
+    └── playbooks/                       # 13 kill chain playbook prompts (.md)
 ```
 
 The entire agent is a single Python file. `echidna_chat.py` defines the `EchidnaChat` class, which subclasses `Chat` from `mythic_container.ChatBase`. On startup, `mythic_container.mythic_service.start_and_run_forever()` discovers and registers it with Mythic's RabbitMQ message bus.

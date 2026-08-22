@@ -15,10 +15,40 @@ from mythic_container.logging import logger
 import aiohttp
 import asyncio
 import json
+import pathlib
 import uuid
+
+
+def _load_playbooks():
+    """Load playbook prompts from .md files in the playbooks/ directory."""
+    playbooks = {}
+    pb_dir = pathlib.Path(__file__).parent / "playbooks"
+    if not pb_dir.is_dir():
+        return playbooks
+    for md in sorted(pb_dir.glob("*.md")):
+        text = md.read_text(encoding="utf-8")
+        name = md.stem
+        description = ""
+        body = text
+        if text.startswith("---"):
+            parts = text.split("---", 2)
+            if len(parts) >= 3:
+                for line in parts[1].strip().splitlines():
+                    if line.startswith("name:"):
+                        name = line.split(":", 1)[1].strip()
+                    elif line.startswith("description:"):
+                        description = line.split(":", 1)[1].strip()
+                body = parts[2].strip()
+        playbooks[name] = {"description": description, "prompt": body}
+    return playbooks
+
+
+PLAYBOOKS = _load_playbooks()
 
 MAX_TOOL_ROUNDS = 15
 TASK_POLL_TIMEOUT = 120
+LLM_MAX_RETRIES = 5
+LLM_RETRY_BACKOFF = (2, 4, 8, 16, 32)
 
 SYSTEM_PROMPT = (
     "You are Echidna, a virtual red team operator embedded in Mythic C2. "
@@ -332,6 +362,29 @@ class EchidnaChat(Chat):
                             "(empty = vendor API)"
                         ),
                     ),
+                    ChatModelConfigurationOption(
+                        Name="playbook",
+                        DisplayName="Playbook",
+                        Type=ChatModelConfigurationOptionType.Choice,
+                        Description=(
+                            "Active playbook — injects a specialized "
+                            "system prompt for a specific kill chain phase"
+                        ),
+                        DefaultValue="None",
+                        Choices=[
+                            ChatModelConfigurationOptionChoice(
+                                Label="None", Value="None",
+                                Description="No playbook — general operator mode",
+                            ),
+                        ] + [
+                            ChatModelConfigurationOptionChoice(
+                                Label=name,
+                                Value=name,
+                                Description=pb["description"],
+                            )
+                            for name, pb in PLAYBOOKS.items()
+                        ],
+                    ),
                 ],
                 OptionalUserSecrets=[
                     "anthropic_api_key",
@@ -348,6 +401,16 @@ class EchidnaChat(Chat):
                         Name="callbacks",
                         Description="List active Mythic callbacks",
                     ),
+                    ChatSlashCommandDefinition(
+                        Name="playbooks",
+                        Description="List available playbooks",
+                    ),
+                ] + [
+                    ChatSlashCommandDefinition(
+                        Name=name,
+                        Description=pb["description"] or name,
+                    )
+                    for name, pb in PLAYBOOKS.items()
                 ],
             ),
         ),
@@ -356,6 +419,7 @@ class EchidnaChat(Chat):
     async def chat(self, request: ChatRequest):
         response_key = str(uuid.uuid4())
 
+        slash_playbook = None
         if request.SlashCommand:
             if request.SlashCommand.Name == "help":
                 await self._show_help(request, response_key)
@@ -363,12 +427,18 @@ class EchidnaChat(Chat):
             if request.SlashCommand.Name == "callbacks":
                 await self._list_callbacks_slash(request, response_key)
                 return
+            if request.SlashCommand.Name == "playbooks":
+                await self._list_playbooks(request, response_key)
+                return
+            if request.SlashCommand.Name in PLAYBOOKS:
+                slash_playbook = request.SlashCommand.Name
 
         config = ChatConfigView.from_request(request)
         secrets = ChatSecretView.from_request(request)
         provider = config.text("provider", "Anthropic")
         model = config.text("model") or PROVIDER_DEFAULTS.get(provider, "")
         base_url = config.text("base_url", "").rstrip("/")
+        playbook_name = slash_playbook or config.text("playbook", "None")
 
         try:
             api_key = self._resolve_api_key(provider, config, secrets, base_url)
@@ -376,12 +446,21 @@ class EchidnaChat(Chat):
             await self.send_error(request, response_key, str(e))
             return
 
+        system_prompt = SYSTEM_PROMPT
+        if playbook_name != "None" and playbook_name in PLAYBOOKS:
+            system_prompt += (
+                f"\n\n## ACTIVE PLAYBOOK: {playbook_name}\n\n"
+                + PLAYBOOKS[playbook_name]["prompt"]
+            )
+
         tool_count = len(OPENAI_TOOLS) if provider != "Google" else 0
+        pb_label = playbook_name if playbook_name != "None" else "—"
         items = [
             {"key": "provider", "label": "Provider", "value": provider, "order": 0},
             {"key": "model", "label": "Model", "value": model, "order": 1},
-            {"key": "mythic_tools", "label": "Mythic Tools", "value": tool_count, "order": 2},
-            {"key": "max_rounds", "label": "Max Rounds", "value": MAX_TOOL_ROUNDS, "order": 3},
+            {"key": "playbook", "label": "Playbook", "value": pb_label, "order": 2},
+            {"key": "mythic_tools", "label": "Mythic Tools", "value": tool_count, "order": 3},
+            {"key": "max_rounds", "label": "Max Rounds", "value": MAX_TOOL_ROUNDS, "order": 4},
         ]
         try:
             await self.update_channel_metadata(
@@ -394,6 +473,7 @@ class EchidnaChat(Chat):
             if provider == "Anthropic":
                 await self._agentic_anthropic(
                     request, response_key, api_key, model, base_url,
+                    system_prompt,
                 )
             elif provider in ("OpenAI", "Kimi", "Custom"):
                 url = self._chat_completions_url(provider, base_url)
@@ -401,10 +481,12 @@ class EchidnaChat(Chat):
                     url = "https://api.moonshot.ai/v1/chat/completions"
                 await self._agentic_openai(
                     request, response_key, api_key, model, url,
+                    system_prompt,
                 )
             elif provider == "Google":
                 await self._chat_google(
                     request, response_key, api_key, model,
+                    system_prompt,
                 )
             else:
                 await self.send_error(
@@ -430,10 +512,21 @@ class EchidnaChat(Chat):
         tool_calls_by_idx = {}
         finish_reason = ""
 
-        async with session.post(
-            url, headers=headers, json=payload,
-            timeout=aiohttp.ClientTimeout(total=180, sock_read=60),
-        ) as resp:
+        resp = None
+        for attempt in range(LLM_MAX_RETRIES):
+            resp = await session.post(
+                url, headers=headers, json=payload,
+                timeout=aiohttp.ClientTimeout(total=180, sock_read=60),
+            )
+            if resp.status == 429 and attempt < LLM_MAX_RETRIES - 1:
+                resp.close()
+                wait = LLM_RETRY_BACKOFF[attempt]
+                logger.warning(f"[echidna] 429 from LLM, retrying in {wait}s")
+                await asyncio.sleep(wait)
+                continue
+            break
+
+        async with resp:
             if resp.status != 200:
                 text = await resp.text()
                 raise RuntimeError(f"LLM API {resp.status}: {text[:500]}")
@@ -479,13 +572,13 @@ class EchidnaChat(Chat):
         return content, tool_calls, finish_reason
 
     async def _agentic_openai(self, request, response_key, api_key, model,
-                              url):
+                              url, system_prompt):
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
         messages = self.build_chat_messages(
-            request, system_prompt=SYSTEM_PROMPT,
+            request, system_prompt=system_prompt,
         )
         messages = [
             m for m in messages
@@ -586,10 +679,21 @@ class EchidnaChat(Chat):
         tool_uses = []
         current_block = None
 
-        async with session.post(
-            url, headers=headers, json=payload,
-            timeout=aiohttp.ClientTimeout(total=180, sock_read=60),
-        ) as resp:
+        resp = None
+        for attempt in range(LLM_MAX_RETRIES):
+            resp = await session.post(
+                url, headers=headers, json=payload,
+                timeout=aiohttp.ClientTimeout(total=180, sock_read=60),
+            )
+            if resp.status == 429 and attempt < LLM_MAX_RETRIES - 1:
+                resp.close()
+                wait = LLM_RETRY_BACKOFF[attempt]
+                logger.warning(f"[echidna] 429 from LLM, retrying in {wait}s")
+                await asyncio.sleep(wait)
+                continue
+            break
+
+        async with resp:
             if resp.status != 200:
                 text = await resp.text()
                 raise RuntimeError(
@@ -655,7 +759,7 @@ class EchidnaChat(Chat):
         return text_parts, tool_uses
 
     async def _agentic_anthropic(self, request, response_key, api_key, model,
-                                 base_url):
+                                 base_url, system_prompt):
         url = (
             f"{_anthropic_root(base_url)}/v1/messages"
             if base_url
@@ -667,7 +771,7 @@ class EchidnaChat(Chat):
             "content-type": "application/json",
         }
         raw_messages = self.build_chat_messages(
-            request, system_prompt=SYSTEM_PROMPT,
+            request, system_prompt=system_prompt,
         )
         system_text = ""
         messages = []
@@ -768,13 +872,14 @@ class EchidnaChat(Chat):
             request, response_key, complete_request=True,
         )
 
-    async def _chat_google(self, request, response_key, api_key, model):
+    async def _chat_google(self, request, response_key, api_key, model,
+                           system_prompt):
         url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
             f"{model}:generateContent?key={api_key}"
         )
         messages = self.build_chat_messages(
-            request, system_prompt=SYSTEM_PROMPT,
+            request, system_prompt=system_prompt,
         )
         contents = []
         system_instruction = ""
@@ -793,11 +898,22 @@ class EchidnaChat(Chat):
             }
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url, json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=aiohttp.ClientTimeout(total=60),
-            ) as resp:
+            resp = None
+            for attempt in range(LLM_MAX_RETRIES):
+                resp = await session.post(
+                    url, json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=60),
+                )
+                if resp.status == 429 and attempt < LLM_MAX_RETRIES - 1:
+                    resp.close()
+                    wait = LLM_RETRY_BACKOFF[attempt]
+                    logger.warning(f"[echidna] 429 from Google, retrying in {wait}s")
+                    await asyncio.sleep(wait)
+                    continue
+                break
+
+            async with resp:
                 if resp.status != 200:
                     text = await resp.text()
                     raise RuntimeError(f"Google API {resp.status}: {text[:500]}")
@@ -1199,7 +1315,8 @@ class EchidnaChat(Chat):
             f"**Echidna v{self.semver}** — Virtual LLM agent for Mythic C2\n\n"
             "**Slash Commands**\n"
             "- `/help` — this message\n"
-            "- `/callbacks` — list active callbacks (direct, no LLM)\n\n"
+            "- `/callbacks` — list active callbacks (direct, no LLM)\n"
+            "- `/playbooks` — list available playbooks\n\n"
             "**Chat**\n"
             "Type naturally. Echidna uses LLM tool calling to interact "
             "with Mythic when needed:\n"
@@ -1218,6 +1335,28 @@ class EchidnaChat(Chat):
             "- `tag_task` — tag tasks with ATT&CK techniques"
         )
         await self.send_text(request, response_key, content=text)
+        await self.send_complete(
+            request, response_key, complete_request=True,
+        )
+
+    async def _list_playbooks(self, request, response_key):
+        if not PLAYBOOKS:
+            await self.send_text(
+                request, response_key,
+                content="No playbooks found.",
+            )
+        else:
+            lines = [
+                f"**Playbooks ({len(PLAYBOOKS)})**\n",
+                "Select a playbook in channel settings to activate it.\n",
+            ]
+            for name, pb in PLAYBOOKS.items():
+                desc = pb["description"] or "No description"
+                lines.append(f"- **{name}** — {desc}")
+            await self.send_text(
+                request, response_key,
+                content="\n".join(lines),
+            )
         await self.send_complete(
             request, response_key, complete_request=True,
         )
