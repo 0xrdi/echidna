@@ -385,6 +385,26 @@ class EchidnaChat(Chat):
                             for name, pb in PLAYBOOKS.items()
                         ],
                     ),
+                    ChatModelConfigurationOption(
+                        Name="approval_mode",
+                        DisplayName="Command Approval",
+                        Type=ChatModelConfigurationOptionType.Choice,
+                        Description=(
+                            "Require operator approval before "
+                            "executing commands on callbacks"
+                        ),
+                        DefaultValue="Enabled",
+                        Choices=[
+                            ChatModelConfigurationOptionChoice(
+                                Label="Enabled", Value="Enabled",
+                                Description="Ask before running commands on callbacks",
+                            ),
+                            ChatModelConfigurationOptionChoice(
+                                Label="Disabled", Value="Disabled",
+                                Description="Execute without asking (dangerous)",
+                            ),
+                        ],
+                    ),
                 ],
                 OptionalUserSecrets=[
                     "anthropic_api_key",
@@ -405,6 +425,10 @@ class EchidnaChat(Chat):
                         Name="playbooks",
                         Description="List available playbooks",
                     ),
+                    ChatSlashCommandDefinition(
+                        Name="reset",
+                        Description="Clear conversation context",
+                    ),
                 ] + [
                     ChatSlashCommandDefinition(
                         Name=name,
@@ -419,6 +443,79 @@ class EchidnaChat(Chat):
     async def chat(self, request: ChatRequest):
         response_key = str(uuid.uuid4())
 
+        if request.InputResponse:
+            ir = request.InputResponse
+            logger.info(
+                f"[echidna] approval response: "
+                f"action={ir.Action!r}"
+            )
+            data = ir.InputRequest.get("data", {})
+            if data.get("type") == "execute_command_approval":
+                approved = ir.Action.lower() in (
+                    "approve", "approved", "accept", "accepted", "yes",
+                )
+                cmd = data.get("command", "")
+                params = data.get("params", "")
+                cmd_str = f"{cmd} {params}".strip()
+                cb_id = data.get("callback_id", "?")
+                if approved:
+                    operator_id = await self._get_operator_id(request)
+                    func_args = {
+                        "callback_id": data["callback_id"],
+                        "command": cmd,
+                    }
+                    if params:
+                        func_args["params"] = params
+                    tool_key = "tool:approved:0"
+                    await self._send_tool_card(
+                        request, tool_key, "execute_command",
+                        func_args, "running",
+                    )
+                    result = await self._execute_tool(
+                        "execute_command", func_args,
+                        request, operator_id,
+                    )
+                    await self._send_tool_card(
+                        request, tool_key, "execute_command",
+                        func_args, "complete", result=result,
+                    )
+                    request.Prompt = (
+                        f"[Command approved and executed] "
+                        f"`{cmd_str}` on callback #{cb_id}.\n\n"
+                        f"Output:\n{result}\n\n"
+                        "Continue — analyze the output, tag the "
+                        "task, and proceed with follow-up actions."
+                    )
+                else:
+                    request.Prompt = (
+                        f"[Command denied] `{cmd_str}` on callback "
+                        f"#{cb_id} was not executed. Suggest an "
+                        "alternative or ask the operator."
+                    )
+
+        require_approval = True
+        prompt_text = request.Prompt or ""
+        if prompt_text.lstrip().startswith("--dangerous"):
+            require_approval = False
+            request.Prompt = (
+                prompt_text.lstrip()
+                .removeprefix("--dangerous").lstrip()
+            )
+        if (
+            request.SlashCommand
+            and request.SlashCommand.Argument
+            and request.SlashCommand.Argument.lstrip()
+                .startswith("--dangerous")
+        ):
+            require_approval = False
+            cleaned = (
+                request.SlashCommand.Argument.lstrip()
+                .removeprefix("--dangerous").lstrip()
+            )
+            request.SlashCommand.Argument = cleaned
+            if not request.Prompt:
+                request.Prompt = cleaned
+
         slash_playbook = None
         if request.SlashCommand:
             if request.SlashCommand.Name == "help":
@@ -430,8 +527,29 @@ class EchidnaChat(Chat):
             if request.SlashCommand.Name == "playbooks":
                 await self._list_playbooks(request, response_key)
                 return
+            if request.SlashCommand.Name == "reset":
+                self._context_resets[request.ChannelID] = (
+                    request.Context[-1].ID if request.Context else 0
+                )
+                await self.send_text(
+                    request, response_key,
+                    content=(
+                        "Context cleared. Previous messages will "
+                        "not be sent to the LLM."
+                    ),
+                )
+                await self.send_complete(
+                    request, response_key, complete_request=True,
+                )
+                return
             if request.SlashCommand.Name in PLAYBOOKS:
                 slash_playbook = request.SlashCommand.Name
+
+        cutoff = self._context_resets.get(request.ChannelID, 0)
+        if cutoff:
+            request.Context = [
+                m for m in request.Context if m.ID > cutoff
+            ]
 
         config = ChatConfigView.from_request(request)
         secrets = ChatSecretView.from_request(request)
@@ -439,6 +557,9 @@ class EchidnaChat(Chat):
         model = config.text("model") or PROVIDER_DEFAULTS.get(provider, "")
         base_url = config.text("base_url", "").rstrip("/")
         playbook_name = slash_playbook or config.text("playbook", "None")
+
+        if config.text("approval_mode", "Enabled") == "Disabled":
+            require_approval = False
 
         try:
             api_key = self._resolve_api_key(provider, config, secrets, base_url)
@@ -455,12 +576,14 @@ class EchidnaChat(Chat):
 
         tool_count = len(OPENAI_TOOLS) if provider != "Google" else 0
         pb_label = playbook_name if playbook_name != "None" else "—"
+        approval_label = "On" if require_approval else "Off"
         items = [
             {"key": "provider", "label": "Provider", "value": provider, "order": 0},
             {"key": "model", "label": "Model", "value": model, "order": 1},
             {"key": "playbook", "label": "Playbook", "value": pb_label, "order": 2},
-            {"key": "mythic_tools", "label": "Mythic Tools", "value": tool_count, "order": 3},
-            {"key": "max_rounds", "label": "Max Rounds", "value": MAX_TOOL_ROUNDS, "order": 4},
+            {"key": "approval", "label": "Approval", "value": approval_label, "order": 3},
+            {"key": "mythic_tools", "label": "Mythic Tools", "value": tool_count, "order": 4},
+            {"key": "max_rounds", "label": "Max Rounds", "value": MAX_TOOL_ROUNDS, "order": 5},
         ]
         try:
             await self.update_channel_metadata(
@@ -473,7 +596,7 @@ class EchidnaChat(Chat):
             if provider == "Anthropic":
                 await self._agentic_anthropic(
                     request, response_key, api_key, model, base_url,
-                    system_prompt,
+                    system_prompt, require_approval,
                 )
             elif provider in ("OpenAI", "Kimi", "Custom"):
                 url = self._chat_completions_url(provider, base_url)
@@ -481,7 +604,7 @@ class EchidnaChat(Chat):
                     url = "https://api.moonshot.ai/v1/chat/completions"
                 await self._agentic_openai(
                     request, response_key, api_key, model, url,
-                    system_prompt,
+                    system_prompt, require_approval,
                 )
             elif provider == "Google":
                 await self._chat_google(
@@ -572,7 +695,7 @@ class EchidnaChat(Chat):
         return content, tool_calls, finish_reason
 
     async def _agentic_openai(self, request, response_key, api_key, model,
-                              url, system_prompt):
+                              url, system_prompt, require_approval=False):
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -614,6 +737,30 @@ class EchidnaChat(Chat):
                     )
                     await self.send_complete(
                         request, response_key, complete_request=True,
+                    )
+                    return
+
+                needs_approval = None
+                if require_approval:
+                    for tc in tool_calls:
+                        if tc["function"]["name"] == "execute_command":
+                            needs_approval = tc
+                            break
+
+                if needs_approval:
+                    if content:
+                        await self.send_text(
+                            request, response_key, content=content,
+                        )
+                        await self.send_complete(request, response_key)
+                    try:
+                        args = json.loads(
+                            needs_approval["function"]["arguments"],
+                        )
+                    except json.JSONDecodeError:
+                        args = {}
+                    await self._request_command_approval(
+                        request, args,
                     )
                     return
 
@@ -759,7 +906,8 @@ class EchidnaChat(Chat):
         return text_parts, tool_uses
 
     async def _agentic_anthropic(self, request, response_key, api_key, model,
-                                 base_url, system_prompt):
+                                 base_url, system_prompt,
+                                 require_approval=False):
         url = (
             f"{_anthropic_root(base_url)}/v1/messages"
             if base_url
@@ -815,6 +963,29 @@ class EchidnaChat(Chat):
                     )
                     await self.send_complete(
                         request, response_key, complete_request=True,
+                    )
+                    return
+
+                needs_approval = None
+                if require_approval:
+                    for tu in tool_uses:
+                        if tu["name"] == "execute_command":
+                            needs_approval = tu
+                            break
+
+                if needs_approval:
+                    if text_parts:
+                        thinking_key = f"thinking:{tool_idx}"
+                        await self.send_text(
+                            request, thinking_key,
+                            content="\n".join(text_parts),
+                        )
+                        await self.send_complete(
+                            request, thinking_key,
+                        )
+                    args = needs_approval.get("input", {})
+                    await self._request_command_approval(
+                        request, args,
                     )
                     return
 
@@ -1200,6 +1371,8 @@ class EchidnaChat(Chat):
             return json.dumps({"error": str(e)})
 
 
+    _context_resets = {}
+
     # ---- tool use cards ----
 
     TOOL_ICONS = {
@@ -1210,6 +1383,29 @@ class EchidnaChat(Chat):
         "event_log": "T",
         "tag_task": "T",
     }
+
+    async def _request_command_approval(self, request, args):
+        cmd = args.get("command", "")
+        params = args.get("params", "")
+        cmd_str = f"{cmd} {params}".strip()
+        cb_id = args.get("callback_id", "?")
+        await self.send_approval_request(
+            request,
+            title="Command Execution",
+            prompt=(
+                f"Execute `{cmd_str}` on callback #{cb_id}?"
+            ),
+            description=(
+                "The LLM wants to run a command on a callback. "
+                "Approve or deny."
+            ),
+            data={
+                "type": "execute_command_approval",
+                "callback_id": args.get("callback_id"),
+                "command": cmd,
+                "params": params,
+            },
+        )
 
     async def _send_tool_card(self, request, response_key, tool_name, args,
                               status, result=None):
