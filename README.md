@@ -201,4 +201,4 @@ MIT — see [LICENSE](LICENSE).
 ## Acknowledgements
 
 - [Mythic C2](https://github.com/its-a-feature/Mythic) by its-a-feature
-- [infreerence](https://github.com/aremndgashi-infreerence) — endpoint discovery and gateway bridging for self-hosted LLMs
+- [infreerence](https://github.com/armendgashi-sentry/infreerence) — endpoint discovery and gateway bridging for self-hosted LLMs
