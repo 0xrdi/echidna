@@ -34,11 +34,11 @@ After installation, Echidna appears in Mythic's Chat sidebar. Create a new chann
 
 | Provider | Tool Use | Default Model | Config |
 |----------|:--------:|---------------|--------|
-| Anthropic | Yes | `claude-sonnet-4-20250514` | API key or `anthropic_base_url` |
-| OpenAI | Yes | `gpt-4o` | API key or `openai_base_url` |
+| Anthropic | Yes | `claude-sonnet-4-20250514` | API key or `base_url` |
+| OpenAI | Yes | `gpt-4o` | API key or `base_url` |
 | Kimi | Yes | `kimi-k3` | API key |
 | Google | Coming soon | `gemini-2.5-flash` | API key |
-| Custom | Yes | auto-detected | `openai_base_url` (required) |
+| Custom | Yes | auto-detected | `base_url` (required) |
 
 Each provider needs **either** an API key **or** a base URL, not both:
 
@@ -80,14 +80,6 @@ The LLM decides when to call tools based on the conversation. It will not fabric
 | `/reset` | Clear conversation context — LLM starts fresh, messages stay in UI. Also clears pinned callback. |
 | `/use <N>` | Pin a default callback (e.g. `/use 1`). Commands target this callback unless you specify another. `/use none` to unpin. |
 | `/report` | Generate an operation report — callbacks, credentials, artifacts, tasks, and token usage |
-
-## Callback Pinning
-
-Pin a default callback with `/use <N>` so you don't have to specify the target on every message. The pinned callback appears in the channel metadata bar. The LLM uses it for `execute_command` unless you explicitly name a different callback. `/use none` unpins. `/reset` also clears the pin.
-
-## Token Tracking
-
-Echidna tracks LLM token usage (input and output) per channel across all rounds. The running total appears in the channel metadata bar. Use `/report` to see the exact counts. Token counts persist across messages but not across container restarts.
 
 ## Playbooks
 
@@ -133,6 +125,14 @@ Two ways to skip the approval prompt:
 - **Per-channel** — set **Command Approval** to **Disabled** in the channel settings. All commands execute without prompting until re-enabled.
 
 The channel metadata badge shows **Approval: On** or **Approval: Off** to reflect the current state.
+
+## Callback Pinning
+
+Pin a default callback with `/use <N>` so you don't have to specify the target on every message. The pinned callback appears in the channel metadata bar. The LLM uses it for `execute_command` unless you explicitly name a different callback. `/use none` unpins. `/reset` also clears the pin.
+
+## Token Tracking
+
+Echidna tracks LLM token usage (input and output) per channel across all rounds. The running total appears in the channel metadata bar. Use `/report` to see the exact counts. Token counts persist across messages but not across container restarts.
 
 ## Mythic Tools
 
@@ -197,7 +197,7 @@ Echidna runs as a Docker container in Mythic's internal network. Tool calls that
 
 ## Custom Endpoints
 
-Select the **Custom** provider and set `openai_base_url` to point at any OpenAI-compatible endpoint. Works with:
+Select the **Custom** provider and set `base_url` to point at any OpenAI-compatible endpoint. Works with:
 
 - **Gateways**: LiteLLM, one-api, new-api (serve multiple protocols, handle model routing)
 - **Inference servers**: vLLM, Ollama, llama.cpp, LocalAI (serve `/v1/chat/completions` directly)
