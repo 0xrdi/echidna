@@ -1179,6 +1179,13 @@ class EchidnaChat(Chat):
                     raise RuntimeError(f"Google API {resp.status}: {text[:500]}")
                 data = await resp.json()
 
+        usage_meta = data.get("usageMetadata", {})
+        if usage_meta:
+            self._track_tokens(request.ChannelID, {
+                "input": usage_meta.get("promptTokenCount", 0),
+                "output": usage_meta.get("candidatesTokenCount", 0),
+            })
+
         text = data["candidates"][0]["content"]["parts"][0]["text"]
         await self.send_text(request, response_key, content=text)
         await self.send_complete(
@@ -1572,13 +1579,15 @@ class EchidnaChat(Chat):
     async def _generate_report(self, request, response_key):
         sections = ["# Operation Report\n"]
 
+        all_callbacks = []
         try:
             cb_search = await SendMythicRPCCallbackSearch(
                 MythicRPCCallbackSearchMessage()
             )
             if cb_search.Success:
-                active = [c for c in cb_search.Results if c.Active]
-                dead = [c for c in cb_search.Results if not c.Active]
+                all_callbacks = cb_search.Results
+                active = [c for c in all_callbacks if c.Active]
+                dead = [c for c in all_callbacks if not c.Active]
                 sections.append(
                     f"## Callbacks ({len(active)} active, "
                     f"{len(dead)} dead)\n"
@@ -1653,19 +1662,15 @@ class EchidnaChat(Chat):
 
             try:
                 all_tasks = []
-                cb_resp = await SendMythicRPCCallbackSearch(
-                    MythicRPCCallbackSearchMessage()
-                )
-                if cb_resp.Success:
-                    for cb in cb_resp.Results:
-                        t_resp = await SendMythicRPCTaskSearch(
-                            MythicRPCTaskSearchMessage(
-                                TaskID=0,
-                                SearchCallbackID=cb.DisplayID,
-                            )
+                for cb in all_callbacks:
+                    t_resp = await SendMythicRPCTaskSearch(
+                        MythicRPCTaskSearchMessage(
+                            TaskID=0,
+                            SearchCallbackID=cb.DisplayID,
                         )
-                        if t_resp.Success and t_resp.Tasks:
-                            all_tasks.extend(t_resp.Tasks)
+                    )
+                    if t_resp.Success and t_resp.Tasks:
+                        all_tasks.extend(t_resp.Tasks)
                 completed = sorted(
                     [t for t in all_tasks if t.Completed],
                     key=lambda t: t.DisplayID,
@@ -1783,7 +1788,10 @@ class EchidnaChat(Chat):
             "**Slash Commands**\n"
             "- `/help` — this message\n"
             "- `/callbacks` — list active callbacks (direct, no LLM)\n"
-            "- `/playbooks` — list available playbooks\n\n"
+            "- `/playbooks` — list available playbooks\n"
+            "- `/reset` — clear conversation context (messages stay in UI)\n"
+            "- `/use <N>` — pin a default callback (`/use none` to unpin)\n"
+            "- `/report` — generate operation report\n\n"
             "**Chat**\n"
             "Type naturally. Echidna uses LLM tool calling to interact "
             "with Mythic when needed:\n"
