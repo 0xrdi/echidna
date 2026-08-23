@@ -610,6 +610,12 @@ class EchidnaChat(Chat):
             if request.SlashCommand.Name in PLAYBOOKS:
                 slash_playbook = request.SlashCommand.Name
 
+        if request.ChannelID in self._pending_resets:
+            self._pending_resets.discard(request.ChannelID)
+            if request.Context:
+                self._context_resets[request.ChannelID] = (
+                    request.Context[-1].ID
+                )
         cutoff = self._context_resets.get(request.ChannelID, 0)
         if cutoff:
             request.Context = [
@@ -1477,6 +1483,7 @@ class EchidnaChat(Chat):
 
 
     _context_resets = {}
+    _pending_resets = set()
     _pinned_callbacks = {}
     _token_usage = {}
 
@@ -1729,6 +1736,7 @@ class EchidnaChat(Chat):
         await self.send_complete(
             request, response_key, complete_request=True,
         )
+        self._pending_resets.add(request.ChannelID)
 
     async def _export_chat(self, request, response_key):
         lines = [
@@ -1767,6 +1775,7 @@ class EchidnaChat(Chat):
         await self.send_complete(
             request, response_key, complete_request=True,
         )
+        self._pending_resets.add(request.ChannelID)
 
     async def _update_channel_metadata(self, request):
         config = ChatConfigView.from_request(request)
