@@ -302,7 +302,7 @@ def _anthropic_root(base_url: str) -> str:
 class EchidnaChat(Chat):
     name = "echidna"
     description = "Virtual LLM agent for red team operations"
-    semver = "1.1.0"
+    semver = "1.2.0"
     agent_icon_path = "echidna/mythic/agent_functions/echidna.svg"
 
     models = [
@@ -429,6 +429,14 @@ class EchidnaChat(Chat):
                         Name="reset",
                         Description="Clear conversation context",
                     ),
+                    ChatSlashCommandDefinition(
+                        Name="use",
+                        Description="Pin a default callback (e.g. /use 1)",
+                    ),
+                    ChatSlashCommandDefinition(
+                        Name="report",
+                        Description="Generate operation report",
+                    ),
                 ] + [
                     ChatSlashCommandDefinition(
                         Name=name,
@@ -531,15 +539,63 @@ class EchidnaChat(Chat):
                 self._context_resets[request.ChannelID] = (
                     request.Context[-1].ID if request.Context else 0
                 )
+                self._pinned_callbacks.pop(
+                    request.ChannelID, None,
+                )
+                await self._update_channel_metadata(request)
                 await self.send_text(
                     request, response_key,
                     content=(
                         "Context cleared. Previous messages will "
-                        "not be sent to the LLM."
+                        "not be sent to the LLM. "
+                        "Pinned callback cleared."
                     ),
                 )
                 await self.send_complete(
                     request, response_key, complete_request=True,
+                )
+                return
+            if request.SlashCommand.Name == "use":
+                arg = (
+                    request.SlashCommand.Argument or ""
+                ).strip().lstrip("#")
+                if not arg or arg == "none":
+                    self._pinned_callbacks.pop(
+                        request.ChannelID, None,
+                    )
+                    await self.send_text(
+                        request, response_key,
+                        content="Callback unpinned.",
+                    )
+                else:
+                    try:
+                        cb_id = int(arg)
+                    except ValueError:
+                        await self.send_error(
+                            request, response_key,
+                            f"Invalid callback ID: {arg}",
+                        )
+                        return
+                    self._pinned_callbacks[
+                        request.ChannelID
+                    ] = cb_id
+                    await self.send_text(
+                        request, response_key,
+                        content=(
+                            f"Pinned to callback **#{cb_id}**. "
+                            "Commands default to this callback "
+                            "unless you specify another. "
+                            "Use `/use none` to unpin."
+                        ),
+                    )
+                await self._update_channel_metadata(request)
+                await self.send_complete(
+                    request, response_key, complete_request=True,
+                )
+                return
+            if request.SlashCommand.Name == "report":
+                await self._generate_report(
+                    request, response_key,
                 )
                 return
             if request.SlashCommand.Name in PLAYBOOKS:
@@ -568,29 +624,21 @@ class EchidnaChat(Chat):
             return
 
         system_prompt = SYSTEM_PROMPT
+        pinned = self._pinned_callbacks.get(request.ChannelID)
+        if pinned:
+            system_prompt += (
+                f"\n\nDEFAULT CALLBACK: The operator has pinned "
+                f"callback #{pinned}. Use this callback for "
+                "execute_command unless the operator specifies "
+                "a different one."
+            )
         if playbook_name != "None" and playbook_name in PLAYBOOKS:
             system_prompt += (
                 f"\n\n## ACTIVE PLAYBOOK: {playbook_name}\n\n"
                 + PLAYBOOKS[playbook_name]["prompt"]
             )
 
-        tool_count = len(OPENAI_TOOLS) if provider != "Google" else 0
-        pb_label = playbook_name if playbook_name != "None" else "—"
-        approval_label = "On" if require_approval else "Off"
-        items = [
-            {"key": "provider", "label": "Provider", "value": provider, "order": 0},
-            {"key": "model", "label": "Model", "value": model, "order": 1},
-            {"key": "playbook", "label": "Playbook", "value": pb_label, "order": 2},
-            {"key": "approval", "label": "Approval", "value": approval_label, "order": 3},
-            {"key": "mythic_tools", "label": "Mythic Tools", "value": tool_count, "order": 4},
-            {"key": "max_rounds", "label": "Max Rounds", "value": MAX_TOOL_ROUNDS, "order": 5},
-        ]
-        try:
-            await self.update_channel_metadata(
-                request, {"items": items},
-            )
-        except Exception:
-            pass
+        await self._update_channel_metadata(request)
 
         try:
             if provider == "Anthropic":
@@ -621,6 +669,8 @@ class EchidnaChat(Chat):
         except Exception as e:
             logger.exception(f"[echidna] chat error: {e}")
             await self.send_error(request, response_key, str(e))
+        finally:
+            await self._update_channel_metadata(request)
 
     # ---- agentic loops ----
 
@@ -628,12 +678,14 @@ class EchidnaChat(Chat):
         """Stream an OpenAI-compatible response, returning accumulated message.
 
         Yields control on each SSE chunk so asyncio.CancelledError can
-        propagate promptly. Returns (content, tool_calls, finish_reason).
+        propagate promptly. Returns (content, tool_calls, finish_reason, usage).
         """
         payload["stream"] = True
+        payload["stream_options"] = {"include_usage": True}
         content_parts = []
         tool_calls_by_idx = {}
         finish_reason = ""
+        usage = {"input": 0, "output": 0}
 
         resp = None
         for attempt in range(LLM_MAX_RETRIES):
@@ -666,8 +718,9 @@ class EchidnaChat(Chat):
                 except json.JSONDecodeError:
                     continue
 
-                delta = chunk.get("choices", [{}])[0].get("delta", {})
-                fr = chunk.get("choices", [{}])[0].get("finish_reason")
+                choices = chunk.get("choices", [])
+                delta = choices[0].get("delta", {}) if choices else {}
+                fr = choices[0].get("finish_reason") if choices else None
                 if fr:
                     finish_reason = fr
 
@@ -690,9 +743,18 @@ class EchidnaChat(Chat):
                     if fn.get("arguments"):
                         entry["function"]["arguments"] += fn["arguments"]
 
+                u = chunk.get("usage")
+                if u:
+                    usage["input"] += u.get(
+                        "prompt_tokens", 0,
+                    )
+                    usage["output"] += u.get(
+                        "completion_tokens", 0,
+                    )
+
         content = "".join(content_parts)
         tool_calls = [tool_calls_by_idx[i] for i in sorted(tool_calls_by_idx)]
-        return content, tool_calls, finish_reason
+        return content, tool_calls, finish_reason, usage
 
     async def _agentic_openai(self, request, response_key, api_key, model,
                               url, system_prompt, require_approval=False):
@@ -722,8 +784,13 @@ class EchidnaChat(Chat):
                     "tools": OPENAI_TOOLS,
                 }
 
-                content, tool_calls, finish = await self._stream_openai(
-                    session, url, headers, payload,
+                content, tool_calls, finish, usage = (
+                    await self._stream_openai(
+                        session, url, headers, payload,
+                    )
+                )
+                self._track_tokens(
+                    request.ChannelID, usage,
                 )
                 logger.info(
                     f"[echidna] round {round_num} done: "
@@ -825,6 +892,7 @@ class EchidnaChat(Chat):
         text_parts = []
         tool_uses = []
         current_block = None
+        usage = {"input": 0, "output": 0}
 
         resp = None
         for attempt in range(LLM_MAX_RETRIES):
@@ -903,7 +971,23 @@ class EchidnaChat(Chat):
                             })
                         current_block = None
 
-        return text_parts, tool_uses
+                elif dtype == "message_start":
+                    u = data.get("message", {}).get(
+                        "usage", {},
+                    )
+                    usage["input"] += u.get(
+                        "input_tokens", 0,
+                    )
+                    usage["output"] += u.get(
+                        "output_tokens", 0,
+                    )
+                elif dtype == "message_delta":
+                    u = data.get("usage", {})
+                    usage["output"] += u.get(
+                        "output_tokens", 0,
+                    )
+
+        return text_parts, tool_uses, usage
 
     async def _agentic_anthropic(self, request, response_key, api_key, model,
                                  base_url, system_prompt,
@@ -947,8 +1031,13 @@ class EchidnaChat(Chat):
                 if system_text:
                     payload["system"] = system_text
 
-                text_parts, tool_uses = await self._stream_anthropic(
-                    session, url, headers, payload,
+                text_parts, tool_uses, usage = (
+                    await self._stream_anthropic(
+                        session, url, headers, payload,
+                    )
+                )
+                self._track_tokens(
+                    request.ChannelID, usage,
                 )
                 logger.info(
                     f"[echidna] anthropic round {round_num} done: "
@@ -1372,6 +1461,8 @@ class EchidnaChat(Chat):
 
 
     _context_resets = {}
+    _pinned_callbacks = {}
+    _token_usage = {}
 
     # ---- tool use cards ----
 
@@ -1467,6 +1558,186 @@ class EchidnaChat(Chat):
             )
 
     # ---- helpers ----
+
+    def _track_tokens(self, channel_id, usage):
+        if not usage:
+            return
+        existing = self._token_usage.get(channel_id, {
+            "input": 0, "output": 0,
+        })
+        existing["input"] += usage.get("input", 0)
+        existing["output"] += usage.get("output", 0)
+        self._token_usage[channel_id] = existing
+
+    async def _generate_report(self, request, response_key):
+        sections = ["# Operation Report\n"]
+
+        try:
+            cb_search = await SendMythicRPCCallbackSearch(
+                MythicRPCCallbackSearchMessage()
+            )
+            if cb_search.Success:
+                active = [c for c in cb_search.Results if c.Active]
+                dead = [c for c in cb_search.Results if not c.Active]
+                sections.append(
+                    f"## Callbacks ({len(active)} active, "
+                    f"{len(dead)} dead)\n"
+                )
+                for cb in active:
+                    sections.append(
+                        f"- **#{cb.DisplayID}** `{cb.PayloadType}` "
+                        f"— {cb.User}@{cb.Host} ({cb.Ip}) "
+                        f"pid {cb.PID} `{cb.ProcessName}` "
+                        f"integrity={cb.IntegrityLevel}"
+                    )
+                sections.append("")
+        except Exception as e:
+            sections.append(f"Callbacks: error — {e}\n")
+
+        task_id = await self._get_any_task_id()
+
+        if task_id:
+            try:
+                cred_resp = await SendMythicRPCCredentialSearch(
+                    MythicRPCCredentialSearchMessage(TaskID=task_id)
+                )
+                if cred_resp.Success:
+                    creds = cred_resp.Credentials
+                    sections.append(f"## Credentials ({len(creds)})\n")
+                    if creds:
+                        for c in creds:
+                            realm = f" ({c.Realm})" if c.Realm else ""
+                            cred_val = c.Credential or ""
+                            truncated = (
+                                cred_val[:40] + "..."
+                                if len(cred_val) > 40
+                                else cred_val
+                            )
+                            sections.append(
+                                f"- `{c.Account}`{realm} — "
+                                f"{c.CredentialType}: `{truncated}`"
+                            )
+                    else:
+                        sections.append("No credentials stored.")
+                    sections.append("")
+            except Exception as e:
+                sections.append(f"Credentials: error — {e}\n")
+
+            try:
+                art_resp = await SendMythicRPCArtifactSearch(
+                    MythicRPCArtifactSearchMessage(
+                        TaskID=task_id,
+                        SearchArtifacts=MythicRPCArtifactSearchArtifactData(),
+                    )
+                )
+                if art_resp.Success:
+                    arts = art_resp.Artifacts
+                    sections.append(f"## Artifacts ({len(arts)})\n")
+                    if arts:
+                        for a in arts:
+                            cleanup = (
+                                " [needs cleanup]"
+                                if a.NeedsCleanup else ""
+                            )
+                            sections.append(
+                                f"- `{a.ArtifactType or 'Unknown'}` "
+                                f"{a.Host or ''} — "
+                                f"{a.ArtifactMessage or ''}"
+                                f"{cleanup}"
+                            )
+                    else:
+                        sections.append("No artifacts logged.")
+                    sections.append("")
+            except Exception as e:
+                sections.append(f"Artifacts: error — {e}\n")
+
+            try:
+                all_tasks = []
+                cb_resp = await SendMythicRPCCallbackSearch(
+                    MythicRPCCallbackSearchMessage()
+                )
+                if cb_resp.Success:
+                    for cb in cb_resp.Results:
+                        t_resp = await SendMythicRPCTaskSearch(
+                            MythicRPCTaskSearchMessage(
+                                TaskID=0,
+                                SearchCallbackID=cb.DisplayID,
+                            )
+                        )
+                        if t_resp.Success and t_resp.Tasks:
+                            all_tasks.extend(t_resp.Tasks)
+                completed = sorted(
+                    [t for t in all_tasks if t.Completed],
+                    key=lambda t: t.DisplayID,
+                )
+                sections.append(
+                    f"## Tasks ({len(completed)} completed, "
+                    f"{len(all_tasks)} total)\n"
+                )
+                if completed:
+                    for t in completed:
+                        status = t.Status or "done"
+                        sections.append(
+                            f"- Task #{t.DisplayID} "
+                            f"cb#{t.CallbackDisplayID} "
+                            f"`{t.CommandName} "
+                            f"{t.DisplayParams or ''}` "
+                            f"— {status}"
+                        )
+                else:
+                    sections.append("No completed tasks.")
+                sections.append("")
+            except Exception as e:
+                sections.append(f"Tasks: error — {e}\n")
+        else:
+            sections.append(
+                "## Credentials / Artifacts / Tasks\n"
+                "No tasks found — cannot query these sections "
+                "without at least one executed task.\n"
+            )
+
+        usage = self._token_usage.get(
+            request.ChannelID, {"input": 0, "output": 0},
+        )
+        total = usage["input"] + usage["output"]
+        sections.append("## Token Usage\n")
+        sections.append(
+            f"- Input: **{usage['input']:,}**\n"
+            f"- Output: **{usage['output']:,}**\n"
+            f"- Total: **{total:,}**"
+        )
+        sections.append("")
+
+        await self.send_text(
+            request, response_key,
+            content="\n".join(sections),
+        )
+        await self.send_complete(
+            request, response_key, complete_request=True,
+        )
+
+    async def _update_channel_metadata(self, request):
+        config = ChatConfigView.from_request(request)
+        provider = config.text("provider", "Anthropic")
+        model = config.text("model") or PROVIDER_DEFAULTS.get(provider, "")
+        playbook_name = config.text("playbook", "None")
+        approval_mode = config.text("approval_mode", "Enabled")
+        pinned = self._pinned_callbacks.get(request.ChannelID)
+        usage = self._token_usage.get(request.ChannelID)
+        items = [
+            {"key": "provider", "label": "Provider", "value": provider, "order": 0},
+            {"key": "model", "label": "Model", "value": model, "order": 1},
+            {"key": "playbook", "label": "Playbook", "value": playbook_name if playbook_name != "None" else "—", "order": 2},
+            {"key": "callback", "label": "Callback", "value": f"#{pinned}" if pinned else "—", "order": 3},
+            {"key": "approval", "label": "Approval", "value": "Off" if approval_mode == "Disabled" else "On", "order": 4},
+            {"key": "tokens", "label": "Tokens", "value": "0" if not usage else f"{usage['input']}in / {usage['output']}out", "order": 5},
+        ]
+        try:
+            await self.update_channel_metadata(
+                request, {"items": items},
+            )
+        except Exception:
+            pass
 
     async def _get_operator_id(self, request):
         try:

@@ -77,7 +77,17 @@ The LLM decides when to call tools based on the conversation. It will not fabric
 | `/help` | Show version, available tools, and usage examples |
 | `/callbacks` | List active callbacks directly (bypasses the LLM) |
 | `/playbooks` | List available playbooks with descriptions |
-| `/reset` | Clear conversation context — LLM starts fresh, messages stay in UI |
+| `/reset` | Clear conversation context — LLM starts fresh, messages stay in UI. Also clears pinned callback. |
+| `/use <N>` | Pin a default callback (e.g. `/use 1`). Commands target this callback unless you specify another. `/use none` to unpin. |
+| `/report` | Generate an operation report — callbacks, credentials, artifacts, tasks, and token usage |
+
+## Callback Pinning
+
+Pin a default callback with `/use <N>` so you don't have to specify the target on every message. The pinned callback appears in the channel metadata bar. The LLM uses it for `execute_command` unless you explicitly name a different callback. `/use none` unpins. `/reset` also clears the pin.
+
+## Token Tracking
+
+Echidna tracks LLM token usage (input and output) per channel across all rounds. The running total appears in the channel metadata bar. Use `/report` to see the exact counts. Token counts persist across messages but not across container restarts.
 
 ## Playbooks
 
