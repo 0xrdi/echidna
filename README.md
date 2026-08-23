@@ -80,6 +80,7 @@ The LLM decides when to call tools based on the conversation. It will not fabric
 | `/reset` | Clear conversation context — LLM starts fresh, messages stay in UI. Also clears pinned callback. |
 | `/use <N>` | Pin a default callback (e.g. `/use 1`). Commands target this callback unless you specify another. `/use none` to unpin. |
 | `/report` | Generate an operation report — callbacks, credentials, artifacts, tasks, and token usage |
+| `/export` | Export the full chat history as markdown |
 
 ## Playbooks
 

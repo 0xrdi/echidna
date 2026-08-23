@@ -437,6 +437,10 @@ class EchidnaChat(Chat):
                         Name="report",
                         Description="Generate operation report",
                     ),
+                    ChatSlashCommandDefinition(
+                        Name="export",
+                        Description="Export chat as markdown",
+                    ),
                 ] + [
                     ChatSlashCommandDefinition(
                         Name=name,
@@ -595,6 +599,11 @@ class EchidnaChat(Chat):
                 return
             if request.SlashCommand.Name == "report":
                 await self._generate_report(
+                    request, response_key,
+                )
+                return
+            if request.SlashCommand.Name == "export":
+                await self._export_chat(
                     request, response_key,
                 )
                 return
@@ -1721,6 +1730,44 @@ class EchidnaChat(Chat):
             request, response_key, complete_request=True,
         )
 
+    async def _export_chat(self, request, response_key):
+        lines = [
+            f"# Chat Export — {request.ChannelName or 'channel'}\n",
+        ]
+        for msg in request.Context:
+            ts = msg.CreatedAt or ""
+            sender = msg.SenderDisplayName or msg.AuthorType or "unknown"
+            if msg.AuthorType == "ai":
+                header = f"### Echidna"
+            else:
+                header = f"### {sender}"
+            if ts:
+                header += f" ({ts})"
+            lines.append(header)
+            lines.append("")
+            lines.append(msg.Message or "*(empty)*")
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+
+        usage = self._token_usage.get(
+            request.ChannelID, {"input": 0, "output": 0},
+        )
+        total = usage["input"] + usage["output"]
+        lines.append(
+            f"*Exported {len(request.Context)} messages. "
+            f"Tokens: {total:,} "
+            f"({usage['input']:,} in / {usage['output']:,} out)*"
+        )
+
+        await self.send_text(
+            request, response_key,
+            content="\n".join(lines),
+        )
+        await self.send_complete(
+            request, response_key, complete_request=True,
+        )
+
     async def _update_channel_metadata(self, request):
         config = ChatConfigView.from_request(request)
         provider = config.text("provider", "Anthropic")
@@ -1791,7 +1838,8 @@ class EchidnaChat(Chat):
             "- `/playbooks` — list available playbooks\n"
             "- `/reset` — clear conversation context (messages stay in UI)\n"
             "- `/use <N>` — pin a default callback (`/use none` to unpin)\n"
-            "- `/report` — generate operation report\n\n"
+            "- `/report` — generate operation report\n"
+            "- `/export` — export chat as markdown\n\n"
             "**Chat**\n"
             "Type naturally. Echidna uses LLM tool calling to interact "
             "with Mythic when needed:\n"
