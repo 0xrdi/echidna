@@ -177,20 +177,29 @@ echidna/
 ├── Dockerfile                           # Container image
 ├── config.json                          # Mythic container config
 └── echidna/mythic/agent_functions/
-    ├── echidna_chat.py                  # Chat container — agentic loop, tools, streaming
+    ├── echidna_chat.py                  # Main class, slash commands, config
+    ├── core/
+    │   ├── __init__.py                  # Public exports
+    │   ├── constants.py                 # System prompt, provider defaults, limits
+    │   ├── tools.py                     # Tool definitions (OpenAI + Anthropic formats)
+    │   ├── http.py                      # Shared HTTP retry helper
+    │   ├── providers.py                 # LLM provider streaming and agentic loops
+    │   ├── tool_handlers.py             # Tool dispatch and Mythic RPC handlers
+    │   └── report.py                    # /report and /export generation
     └── playbooks/                       # 13 kill chain playbook prompts (.md)
 ```
 
-The entire agent is a single Python file. `echidna_chat.py` defines the `EchidnaChat` class, which subclasses `Chat` from `mythic_container.ChatBase`. On startup, `mythic_container.mythic_service.start_and_run_forever()` discovers and registers it with Mythic's RabbitMQ message bus.
+`EchidnaChat` subclasses `Chat` from `mythic_container.ChatBase` and composes three mixins: `ProviderMixin` (LLM streaming), `ToolHandlerMixin` (tool dispatch), and `ReportMixin` (reports/exports). On startup, `mythic_container.mythic_service.start_and_run_forever()` discovers and registers it with Mythic's RabbitMQ message bus.
 
 ### Key Components
 
-- **`EchidnaChat.chat()`** — entry point for every message. Resolves provider config, dispatches to the provider-specific agentic loop.
-- **`_agentic_anthropic()`** — streams Anthropic API responses (SSE `content_block_start/delta/stop` events), handles tool use blocks, feeds results back as `tool_result` messages.
-- **`_agentic_openai()`** — streams OpenAI-compatible responses (SSE `data:` lines), accumulates `tool_calls` deltas by index, feeds results back as `tool` role messages.
-- **`_chat_google()`** — single-shot request to Google's `generateContent` API. Tool support coming soon.
-- **`_execute_tool()`** — dispatcher that routes tool calls to the corresponding `_tool_*` method.
-- **`_send_tool_card()`** — renders tool calls as collapsible subagent-style cards in the Mythic chat UI.
+- **`echidna_chat.py`** — `EchidnaChat.chat()` entry point, slash command routing, config resolution, token tracking, callback pinning.
+- **`core/providers.py`** — `_agentic_anthropic()` streams SSE (`content_block_start/delta/stop` events), handles tool use blocks. `_agentic_openai()` streams SSE (`data:` lines), accumulates `tool_calls` deltas by index. `_chat_google()` single-shot request (no streaming, no tools). Shared `_find_approval_needed()` for command approval across providers.
+- **`core/tool_handlers.py`** — `_execute_tool()` dispatches tool calls to `_tool_*` methods via a name-to-handler dict.
+- **`core/tools.py`** — Tool definitions in OpenAI function-calling format, auto-converted to Anthropic format. `tool_prompt_section()` generates the system prompt tool list from definitions.
+- **`core/report.py`** — `_generate_report()` and `_export_chat()` for `/report` and `/export`.
+- **`core/http.py`** — `retry_post()` shared HTTP POST with 429 retry and exponential backoff.
+- **`core/constants.py`** — `SYSTEM_PROMPT`, `PROVIDER_DEFAULTS`, retry config, timeout limits.
 
 ### Internal Networking
 
