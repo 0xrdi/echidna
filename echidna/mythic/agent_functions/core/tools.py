@@ -101,6 +101,75 @@ OPENAI_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "task_history",
+            "description": (
+                "Search tasks already executed in this operation, or "
+                "fetch the full output of one task. Use this to recall "
+                "what commands already ran and what they returned, "
+                "instead of re-running them. With no arguments, returns "
+                "the most recent tasks."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "integer",
+                        "description": (
+                            "Task display ID. When set, returns the full "
+                            "output of that one task instead of the list."
+                        ),
+                    },
+                    "callback_id": {
+                        "type": "integer",
+                        "description": "Filter by callback display ID",
+                    },
+                    "command": {
+                        "type": "string",
+                        "description": "Filter by command name (e.g. shell, ls)",
+                    },
+                    "params": {
+                        "type": "string",
+                        "description": "Filter by command parameters (substring)",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "credential_search",
+            "description": (
+                "Search credentials stored in the Mythic credential "
+                "store for the current operation. Use this to check "
+                "what credentials have already been recovered before "
+                "harvesting again, or to find credentials for lateral "
+                "movement. Filter by account, realm, or credential type."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "account": {
+                        "type": "string",
+                        "description": "Filter by account or username",
+                    },
+                    "realm": {
+                        "type": "string",
+                        "description": "Filter by realm (domain, host, service)",
+                    },
+                    "credential_type": {
+                        "type": "string",
+                        "description": "Filter by type: plaintext, hash, ticket, certificate, token, key",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "credential_create",
             "description": (
                 "Store a credential in the Mythic credential store. Use "
@@ -234,6 +303,8 @@ TOOL_SUMMARIES = {
     "list_commands": "see which commands an implant supports",
     "execute_command": "run a command on an implant callback",
     "process_search": "search collected process data across hosts",
+    "task_history": "recall previous tasks and their output",
+    "credential_search": "search the stored credentials",
     "credential_create": "store found credentials in Mythic",
     "create_artifact": "log OPSEC artifacts (files dropped, services created)",
     "event_log": "write to the operation timeline",

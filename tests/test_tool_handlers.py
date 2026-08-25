@@ -51,6 +51,12 @@ class FakeHandler(ToolHandlerMixin):
     async def _tool_process_search(self, args, request):
         return json.dumps({"processes": []})
 
+    async def _tool_task_history(self, args, request):
+        return json.dumps({"tasks": []})
+
+    async def _tool_credential_search(self, args, request):
+        return json.dumps({"credentials": []})
+
     async def _tool_credential_create(self, args, request):
         return json.dumps({"status": "stored"})
 
@@ -125,6 +131,20 @@ class TestExecuteToolDispatch:
             "process_search", {}, None, 0,
         )
         assert "processes" in json.loads(result)
+
+    @pytest.mark.asyncio
+    async def test_dispatches_credential_search(self):
+        result = await handler._execute_tool(
+            "credential_search", {}, None, 0,
+        )
+        assert "credentials" in json.loads(result)
+
+    @pytest.mark.asyncio
+    async def test_dispatches_task_history(self):
+        result = await handler._execute_tool(
+            "task_history", {}, None, 0,
+        )
+        assert "tasks" in json.loads(result)
 
 
 # ---- list_commands handler ----
@@ -313,3 +333,272 @@ class TestProcessSearchHandler:
         assert data["count"] == th.MAX_PROCESS_RESULTS
         assert "truncated" in data
         assert len(data["processes"][0]["command_line"]) == 200
+
+
+# ---- credential_search handler ----
+
+class TestCredentialSearchHandler:
+    @pytest.mark.asyncio
+    async def test_no_tasks_error(self, monkeypatch):
+        h = ToolHandlerMixin()
+
+        async def fake_task_id():
+            return 0
+        monkeypatch.setattr(h, "_get_any_task_id", fake_task_id)
+
+        result = await h._tool_credential_search({}, None)
+        assert "error" in json.loads(result)
+
+    @pytest.mark.asyncio
+    async def test_returns_credentials(self, monkeypatch):
+        async def fake_cred_search(msg):
+            assert msg.TaskID == 5
+            # no server-side filter is sent (client-side filtering)
+            assert getattr(msg, "Credential", None) is None
+            return types.SimpleNamespace(
+                Success=True,
+                Credentials=[
+                    types.SimpleNamespace(
+                        Account="Administrator",
+                        Credential="Passw0rd!",
+                        CredentialType="plaintext",
+                        Realm="CORP.LOCAL",
+                        Comment="found in unattend.xml",
+                    ),
+                ],
+            )
+        monkeypatch.setattr(
+            th, "SendMythicRPCCredentialSearch", fake_cred_search,
+        )
+        h = ToolHandlerMixin()
+
+        async def fake_task_id():
+            return 5
+        monkeypatch.setattr(h, "_get_any_task_id", fake_task_id)
+
+        result = await h._tool_credential_search({}, None)
+        data = json.loads(result)
+        assert data["count"] == 1
+        cred = data["credentials"][0]
+        assert cred["account"] == "Administrator"
+        assert cred["credential"] == "Passw0rd!"
+        assert cred["type"] == "plaintext"
+        assert "truncated" not in data
+
+    @pytest.mark.asyncio
+    async def test_filters_client_side(self, monkeypatch):
+        def cred(account, realm, ctype):
+            return types.SimpleNamespace(
+                Account=account, Credential="secret",
+                CredentialType=ctype, Realm=realm, Comment="",
+            )
+        all_creds = [
+            cred("Administrator", "CORP.LOCAL", "plaintext"),
+            cred("svc_backup", "CORP.LOCAL", "hash"),
+            cred("root", "ssh://10.0.0.5", "key"),
+        ]
+
+        async def fake_cred_search(msg):
+            return types.SimpleNamespace(
+                Success=True, Credentials=all_creds,
+            )
+        monkeypatch.setattr(
+            th, "SendMythicRPCCredentialSearch", fake_cred_search,
+        )
+        h = ToolHandlerMixin()
+
+        async def fake_task_id():
+            return 5
+        monkeypatch.setattr(h, "_get_any_task_id", fake_task_id)
+
+        # case-insensitive substring match on account
+        result = await h._tool_credential_search(
+            {"account": "admin"}, None,
+        )
+        data = json.loads(result)
+        assert data["count"] == 1
+        assert data["credentials"][0]["account"] == "Administrator"
+
+        # realm + type combined
+        result = await h._tool_credential_search(
+            {"realm": "corp", "credential_type": "hash"}, None,
+        )
+        data = json.loads(result)
+        assert data["count"] == 1
+        assert data["credentials"][0]["account"] == "svc_backup"
+
+        # no match
+        result = await h._tool_credential_search(
+            {"account": "nonexistent"}, None,
+        )
+        data = json.loads(result)
+        assert data["count"] == 0
+        assert data["credentials"] == []
+
+
+# ---- task_history handler ----
+
+class TestTaskHistoryHandler:
+    def _task(self, display_id, command, params, cb=1, completed=True):
+        return types.SimpleNamespace(
+            TaskID=1000 + display_id, DisplayID=display_id,
+            CallbackDisplayID=cb, CommandName=command,
+            DisplayParams=params, Status="completed",
+            Completed=completed, OperatorUsername="admin",
+        )
+
+    def _patch_task_id(self, monkeypatch, h):
+        async def fake_task_id():
+            return 5
+        monkeypatch.setattr(h, "_get_any_task_id", fake_task_id)
+
+    @pytest.mark.asyncio
+    async def test_list_recent_first(self, monkeypatch):
+        tasks = [
+            self._task(1, "shell", "whoami"),
+            self._task(3, "ls", "/tmp"),
+            self._task(2, "shell", "hostname"),
+        ]
+
+        async def fake_search(msg):
+            assert msg.TaskID == 0
+            assert msg.SearchCallbackID is None
+            return types.SimpleNamespace(Success=True, Tasks=tasks)
+        monkeypatch.setattr(th, "SendMythicRPCTaskSearch", fake_search)
+        h = ToolHandlerMixin()
+        self._patch_task_id(monkeypatch, h)
+
+        result = await h._tool_task_history({}, None)
+        data = json.loads(result)
+        assert data["count"] == 3
+        assert [t["task_id"] for t in data["tasks"]] == [3, 2, 1]
+        assert "truncated" not in data
+
+    @pytest.mark.asyncio
+    async def test_list_filters(self, monkeypatch):
+        tasks = [
+            self._task(1, "shell", "whoami"),
+            self._task(2, "shell", "cat /etc/shadow"),
+            self._task(3, "download", "/etc/passwd"),
+        ]
+
+        async def fake_search(msg):
+            return types.SimpleNamespace(Success=True, Tasks=tasks)
+        monkeypatch.setattr(th, "SendMythicRPCTaskSearch", fake_search)
+        h = ToolHandlerMixin()
+        self._patch_task_id(monkeypatch, h)
+
+        # command filter, case-insensitive substring
+        result = await h._tool_task_history({"command": "SHELL"}, None)
+        data = json.loads(result)
+        assert [t["task_id"] for t in data["tasks"]] == [2, 1]
+
+        # params filter
+        result = await h._tool_task_history({"params": "shadow"}, None)
+        data = json.loads(result)
+        assert [t["task_id"] for t in data["tasks"]] == [2]
+
+        # no match
+        result = await h._tool_task_history({"command": "nope"}, None)
+        assert json.loads(result)["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_list_callback_filter_server_side(self, monkeypatch):
+        async def fake_search(msg):
+            assert msg.SearchCallbackID == 3
+            return types.SimpleNamespace(Success=True, Tasks=[])
+        monkeypatch.setattr(th, "SendMythicRPCTaskSearch", fake_search)
+        h = ToolHandlerMixin()
+        self._patch_task_id(monkeypatch, h)
+
+        result = await h._tool_task_history({"callback_id": 3}, None)
+        assert json.loads(result)["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_list_truncation(self, monkeypatch):
+        tasks = [
+            self._task(i, "shell", f"cmd{i}")
+            for i in range(th.MAX_TASK_RESULTS + 10)
+        ]
+
+        async def fake_search(msg):
+            return types.SimpleNamespace(Success=True, Tasks=tasks)
+        monkeypatch.setattr(th, "SendMythicRPCTaskSearch", fake_search)
+        h = ToolHandlerMixin()
+        self._patch_task_id(monkeypatch, h)
+
+        result = await h._tool_task_history({}, None)
+        data = json.loads(result)
+        assert data["count"] == th.MAX_TASK_RESULTS
+        assert "truncated" in data
+        # most recent first after the cap
+        assert data["tasks"][0]["task_id"] == th.MAX_TASK_RESULTS + 9
+
+    @pytest.mark.asyncio
+    async def test_detail_returns_output(self, monkeypatch):
+        task = self._task(7, "shell", "whoami")
+
+        async def fake_search(msg):
+            assert msg.SearchTaskDisplayID == 7
+            return types.SimpleNamespace(Success=True, Tasks=[task])
+
+        async def fake_resp_search(msg):
+            assert msg.TaskID == 1007  # real TaskID, not display ID
+            return types.SimpleNamespace(
+                Success=True,
+                Responses=[
+                    types.SimpleNamespace(Response="corp\\admin"),
+                    types.SimpleNamespace(Response="uid=0"),
+                ],
+            )
+        monkeypatch.setattr(th, "SendMythicRPCTaskSearch", fake_search)
+        monkeypatch.setattr(
+            th, "SendMythicRPCResponseSearch", fake_resp_search,
+        )
+        h = ToolHandlerMixin()
+        self._patch_task_id(monkeypatch, h)
+
+        result = await h._tool_task_history({"task_id": 7}, None)
+        data = json.loads(result)
+        assert data["command"] == "shell"
+        assert data["output"] == "corp\\admin\nuid=0"
+        assert "truncated" not in data
+
+    @pytest.mark.asyncio
+    async def test_detail_not_found(self, monkeypatch):
+        async def fake_search(msg):
+            return types.SimpleNamespace(Success=True, Tasks=[])
+        monkeypatch.setattr(th, "SendMythicRPCTaskSearch", fake_search)
+        h = ToolHandlerMixin()
+        self._patch_task_id(monkeypatch, h)
+
+        result = await h._tool_task_history({"task_id": 99}, None)
+        assert "not found" in json.loads(result)["error"]
+
+    @pytest.mark.asyncio
+    async def test_detail_output_truncation(self, monkeypatch):
+        task = self._task(7, "shell", "cat bigfile")
+
+        async def fake_search(msg):
+            return types.SimpleNamespace(Success=True, Tasks=[task])
+
+        async def fake_resp_search(msg):
+            return types.SimpleNamespace(
+                Success=True,
+                Responses=[
+                    types.SimpleNamespace(
+                        Response="x" * (th.MAX_TASK_OUTPUT_CHARS + 500)
+                    ),
+                ],
+            )
+        monkeypatch.setattr(th, "SendMythicRPCTaskSearch", fake_search)
+        monkeypatch.setattr(
+            th, "SendMythicRPCResponseSearch", fake_resp_search,
+        )
+        h = ToolHandlerMixin()
+        self._patch_task_id(monkeypatch, h)
+
+        result = await h._tool_task_history({"task_id": 7}, None)
+        data = json.loads(result)
+        assert len(data["output"]) == th.MAX_TASK_OUTPUT_CHARS
+        assert "truncated" in data

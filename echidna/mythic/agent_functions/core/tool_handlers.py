@@ -3,7 +3,13 @@ import json
 import asyncio
 import aiohttp
 from mythic_container.MythicRPC import *
-from .constants import TASK_POLL_TIMEOUT, MAX_PROCESS_RESULTS
+from .constants import (
+    TASK_POLL_TIMEOUT,
+    MAX_PROCESS_RESULTS,
+    MAX_CREDENTIAL_RESULTS,
+    MAX_TASK_RESULTS,
+    MAX_TASK_OUTPUT_CHARS,
+)
 
 
 _TECHNIQUE_RE = re.compile(r"^T\d{4}(\.\d{3})?$")
@@ -17,6 +23,8 @@ class ToolHandlerMixin:
             "list_commands": self._tool_list_commands,
             "execute_command": self._tool_execute_command,
             "process_search": self._tool_process_search,
+            "task_history": self._tool_task_history,
+            "credential_search": self._tool_credential_search,
             "credential_create": self._tool_credential_create,
             "create_artifact": self._tool_create_artifact,
             "event_log": self._tool_event_log,
@@ -248,6 +256,138 @@ class ToolHandlerMixin:
         except Exception:
             pass
         return 0
+
+    async def _tool_task_history(self, args, request):
+        task_display_id = args.get("task_id")
+        try:
+            if task_display_id:
+                return await self._task_output(int(task_display_id))
+            cb_id = args.get("callback_id")
+            search = await SendMythicRPCTaskSearch(
+                MythicRPCTaskSearchMessage(
+                    TaskID=0,
+                    SearchCallbackID=int(cb_id) if cb_id else None,
+                )
+            )
+            if not search.Success:
+                return json.dumps({"error": search.Error})
+            # command/params filters applied client-side (substring,
+            # case-insensitive), consistent with process_search.
+            cmd_f = (args.get("command") or "").lower()
+            params_f = (args.get("params") or "").lower()
+            matched = [
+                t for t in (search.Tasks or [])
+                if (not cmd_f or cmd_f in (t.CommandName or "").lower())
+                and (not params_f
+                     or params_f in (t.DisplayParams or "").lower())
+            ]
+            matched.sort(key=lambda t: t.DisplayID or 0, reverse=True)
+            total = len(matched)
+            tasks = [
+                {
+                    "task_id": t.DisplayID,
+                    "callback_id": t.CallbackDisplayID,
+                    "command": t.CommandName,
+                    "params": (t.DisplayParams or "")[:100],
+                    "status": t.Status,
+                    "completed": t.Completed,
+                    "operator": t.OperatorUsername,
+                }
+                for t in matched[:MAX_TASK_RESULTS]
+            ]
+            result = {"count": len(tasks), "tasks": tasks}
+            if total > len(tasks):
+                result["truncated"] = (
+                    f"showing {len(tasks)} most recent of {total} — "
+                    "refine callback_id/command/params filters"
+                )
+            return json.dumps(result)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    async def _task_output(self, display_id):
+        search = await SendMythicRPCTaskSearch(
+            MythicRPCTaskSearchMessage(
+                TaskID=0,
+                SearchTaskDisplayID=display_id,
+            )
+        )
+        if not search.Success or not search.Tasks:
+            return json.dumps({"error": f"Task #{display_id} not found"})
+        task = search.Tasks[0]
+        resp_search = await SendMythicRPCResponseSearch(
+            MythicRPCResponseSearchMessage(TaskID=task.TaskID)
+        )
+        output_parts = []
+        if resp_search.Success and resp_search.Responses:
+            for r in resp_search.Responses:
+                if hasattr(r, "Response") and r.Response:
+                    output_parts.append(str(r.Response))
+        output = "\n".join(output_parts)
+        result = {
+            "task_id": display_id,
+            "callback_id": task.CallbackDisplayID,
+            "command": task.CommandName,
+            "params": task.DisplayParams,
+            "status": task.Status,
+            "completed": task.Completed,
+            "output": output[:MAX_TASK_OUTPUT_CHARS],
+        }
+        if len(output) > MAX_TASK_OUTPUT_CHARS:
+            result["truncated"] = (
+                f"output clipped to {MAX_TASK_OUTPUT_CHARS} chars"
+            )
+        return json.dumps(result)
+
+    async def _tool_credential_search(self, args, request):
+        try:
+            task_id = await self._get_any_task_id()
+            if not task_id:
+                return json.dumps({
+                    "error": (
+                        "No tasks found — credential search needs at "
+                        "least one executed task for operation context"
+                    ),
+                })
+            resp = await SendMythicRPCCredentialSearch(
+                MythicRPCCredentialSearchMessage(TaskID=task_id)
+            )
+            if not resp.Success:
+                return json.dumps({"error": resp.Error})
+            # Filters applied client-side (substring, case-insensitive)
+            # — server-side filtering risks the same bytea ILIKE issue
+            # seen in process search.
+            account_f = (args.get("account") or "").lower()
+            realm_f = (args.get("realm") or "").lower()
+            type_f = (args.get("credential_type") or "").lower()
+            matched = [
+                c for c in resp.Credentials
+                if (not account_f
+                    or account_f in (c.Account or "").lower())
+                and (not realm_f or realm_f in (c.Realm or "").lower())
+                and (not type_f
+                     or type_f in (c.CredentialType or "").lower())
+            ]
+            total = len(matched)
+            creds = [
+                {
+                    "account": c.Account,
+                    "credential": c.Credential,
+                    "type": c.CredentialType,
+                    "realm": c.Realm,
+                    "comment": c.Comment,
+                }
+                for c in matched[:MAX_CREDENTIAL_RESULTS]
+            ]
+            result = {"count": len(creds), "credentials": creds}
+            if total > len(creds):
+                result["truncated"] = (
+                    f"showing {len(creds)} of {total} — "
+                    "refine account/realm/credential_type filters"
+                )
+            return json.dumps(result)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
 
     async def _tool_credential_create(self, args, request):
         try:

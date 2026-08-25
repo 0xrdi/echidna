@@ -14,6 +14,10 @@ SYSTEM_PROMPT = (
     "implant's command set until you call it.\n"
     "- Before running commands on an unfamiliar callback, call "
     "list_commands to see which commands it supports.\n"
+    "- When asked what credentials we have, ALWAYS call "
+    "credential_search — never guess what has been recovered.\n"
+    "- To recall what commands already ran or see their output again, "
+    "call task_history instead of re-running them.\n"
     "- After finding credentials, ALWAYS call credential_create to store them.\n"
     "- After dropping files or creating persistence, call create_artifact.\n"
     "- After significant milestones, call event_log.\n"
@@ -55,5 +59,8 @@ SECRET_KEYS = {
 MAX_TOOL_ROUNDS = 15
 TASK_POLL_TIMEOUT = 120
 MAX_PROCESS_RESULTS = 100
+MAX_CREDENTIAL_RESULTS = 50
+MAX_TASK_RESULTS = 30
+MAX_TASK_OUTPUT_CHARS = 4000
 LLM_MAX_RETRIES = 5
 LLM_RETRY_BACKOFF = (2, 4, 8, 16, 32)

@@ -260,7 +260,7 @@ class ProviderMixin:
                     except json.JSONDecodeError:
                         args = {}
 
-                    tool_key = f"tool:{tool_idx}"
+                    tool_key = f"{response_key}:tool:{tool_idx}"
                     tool_idx += 1
                     await self._send_tool_card(
                         request, tool_key, func_name, args, "running",
@@ -447,7 +447,7 @@ class ProviderMixin:
                 )
                 if needs_approval:
                     if text_parts:
-                        thinking_key = f"thinking:{tool_idx}"
+                        thinking_key = f"{response_key}:thinking:{tool_idx}"
                         await self.send_text(
                             request, thinking_key,
                             content="\n".join(text_parts),
@@ -467,7 +467,7 @@ class ProviderMixin:
                 })
 
                 if text_parts:
-                    thinking_key = f"thinking:{tool_idx}"
+                    thinking_key = f"{response_key}:thinking:{tool_idx}"
                     await self.send_text(
                         request, thinking_key,
                         content="\n".join(text_parts),
@@ -480,7 +480,7 @@ class ProviderMixin:
                     args = tu.get("input", {})
                     tool_use_id = tu["id"]
 
-                    tool_key = f"tool:{tool_idx}"
+                    tool_key = f"{response_key}:tool:{tool_idx}"
                     tool_idx += 1
                     await self._send_tool_card(
                         request, tool_key, func_name, args, "running",

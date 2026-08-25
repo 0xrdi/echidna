@@ -8,7 +8,7 @@ from echidna.mythic.agent_functions.core.tools import (
 
 
 def test_openai_tools_count():
-    assert len(OPENAI_TOOLS) == 8
+    assert len(OPENAI_TOOLS) == 10
 
 
 def test_anthropic_tools_match_openai():

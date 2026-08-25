@@ -243,7 +243,7 @@ class EchidnaChat(ProviderMixin, ToolHandlerMixin, ReportMixin, Chat):
                     }
                     if params:
                         func_args["params"] = params
-                    tool_key = "tool:approved:0"
+                    tool_key = f"{response_key}:tool:approved:0"
                     await self._send_tool_card(
                         request, tool_key, "execute_command",
                         func_args, "running",
@@ -547,6 +547,8 @@ class EchidnaChat(ProviderMixin, ToolHandlerMixin, ReportMixin, Chat):
             "- `list_commands` — see which commands an implant supports\n"
             "- `execute_command` — run a command on a callback\n"
             "- `process_search` — search collected process data\n"
+            "- `task_history` — recall previous tasks and their output\n"
+            "- `credential_search` — search stored credentials\n"
             "- `credential_create` — store found creds in Mythic\n"
             "- `create_artifact` — log OPSEC artifacts\n"
             "- `event_log` — write to operation timeline\n"

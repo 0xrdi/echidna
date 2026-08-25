@@ -141,7 +141,7 @@ Pinned callbacks, token usage, and `/reset` context cutoffs are stored in a SQLi
 
 ## Mythic Tools
 
-Eight tools are registered with the LLM as function definitions. The LLM calls them automatically based on conversation context. Each tool call is rendered as a collapsible card in the chat with input parameters and output.
+Ten tools are registered with the LLM as function definitions. The LLM calls them automatically based on conversation context. Each tool call is rendered as a collapsible card in the chat with input parameters and output.
 
 | Tool | Description |
 |------|-------------|
@@ -149,6 +149,8 @@ Eight tools are registered with the LLM as function definitions. The LLM calls t
 | `list_commands` | List the commands a callback supports — name, description, help, admin requirements. Use before `execute_command` on unfamiliar implants. |
 | `execute_command` | Run a command on a callback by display ID. Waits for completion (120s timeout) and returns output. Returns the `task_display_id` for use with `tag_task`. |
 | `process_search` | Search process data collected by Mythic across all callbacks, without tasking implants. Filter by host, process name, or user. Useful for AV/EDR spotting. |
+| `task_history` | Search previously executed tasks (filter by callback, command, params) or fetch one task's full output by `task_id`. Recall what already ran instead of re-running it. |
+| `credential_search` | Search the operation credential store. Filter by account, realm, or type. Check what's already been recovered before re-harvesting or for lateral movement. |
 | `credential_create` | Store a credential in Mythic (plaintext, hash, ticket, certificate, token, key). Requires `account` and `credential` fields. |
 | `create_artifact` | Log an OPSEC artifact (file, registry key, service, scheduled task, etc.) with optional cleanup flag. |
 | `event_log` | Write an entry to the operation event log. Supports `info` and `warning` levels. |
