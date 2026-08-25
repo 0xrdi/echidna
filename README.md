@@ -226,7 +226,7 @@ The endpoint must support **function calling** (tool use) for Echidna's tools to
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+BSD-3-Clause — see [LICENSE](LICENSE).
 
 ## Acknowledgements
 
