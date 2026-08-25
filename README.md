@@ -133,16 +133,22 @@ Pin a default callback with `/use <N>` so you don't have to specify the target o
 
 ## Token Tracking
 
-Echidna tracks LLM token usage (input and output) per channel across all rounds. The running total appears in the channel metadata bar. Use `/report` to see the exact counts. Token counts persist across messages but not across container restarts.
+Echidna tracks LLM token usage (input and output) per channel across all rounds. The running total appears in the channel metadata bar. Use `/report` to see the exact counts. Token counts persist across messages and container restarts (see Persistent State).
+
+## Persistent State
+
+Pinned callbacks, token usage, and `/reset` context cutoffs are stored in a SQLite database so they survive container restarts. The path defaults to `echidna_state.db` in the container working directory (`/Mythic`); override it with the `ECHIDNA_STATE_DB` environment variable. To also survive container rebuilds, mount a volume at the database location.
 
 ## Mythic Tools
 
-Six tools are registered with the LLM as function definitions. The LLM calls them automatically based on conversation context. Each tool call is rendered as a collapsible card in the chat with input parameters and output.
+Eight tools are registered with the LLM as function definitions. The LLM calls them automatically based on conversation context. Each tool call is rendered as a collapsible card in the chat with input parameters and output.
 
 | Tool | Description |
 |------|-------------|
 | `list_callbacks` | List active implants (callback ID, host, user, payload type, IP, OS, process) |
+| `list_commands` | List the commands a callback supports — name, description, help, admin requirements. Use before `execute_command` on unfamiliar implants. |
 | `execute_command` | Run a command on a callback by display ID. Waits for completion (120s timeout) and returns output. Returns the `task_display_id` for use with `tag_task`. |
+| `process_search` | Search process data collected by Mythic across all callbacks, without tasking implants. Filter by host, process name, or user. Useful for AV/EDR spotting. |
 | `credential_create` | Store a credential in Mythic (plaintext, hash, ticket, certificate, token, key). Requires `account` and `credential` fields. |
 | `create_artifact` | Log an OPSEC artifact (file, registry key, service, scheduled task, etc.) with optional cleanup flag. |
 | `event_log` | Write an entry to the operation event log. Supports `info` and `warning` levels. |
@@ -183,6 +189,7 @@ echidna/
     │   ├── constants.py                 # System prompt, provider defaults, limits
     │   ├── tools.py                     # Tool definitions (OpenAI + Anthropic formats)
     │   ├── http.py                      # Shared HTTP retry helper
+    │   ├── state.py                     # SQLite per-channel state (pins, tokens, resets)
     │   ├── providers.py                 # LLM provider streaming and agentic loops
     │   ├── tool_handlers.py             # Tool dispatch and Mythic RPC handlers
     │   └── report.py                    # /report and /export generation
@@ -199,6 +206,7 @@ echidna/
 - **`core/tools.py`** — Tool definitions in OpenAI function-calling format, auto-converted to Anthropic format. `tool_prompt_section()` generates the system prompt tool list from definitions.
 - **`core/report.py`** — `_generate_report()` and `_export_chat()` for `/report` and `/export`.
 - **`core/http.py`** — `retry_post()` shared HTTP POST with 429 retry and exponential backoff.
+- **`core/state.py`** — `StateStore` SQLite persistence for pinned callbacks, token usage, and context reset cutoffs (path from `ECHIDNA_STATE_DB`).
 - **`core/constants.py`** — `SYSTEM_PROMPT`, `PROVIDER_DEFAULTS`, retry config, timeout limits.
 
 ### Internal Networking

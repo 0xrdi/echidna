@@ -9,6 +9,11 @@ SYSTEM_PROMPT = (
     "- Use tools when the operator asks about targets, callbacks, implants, "
     "hosts, files, processes, users, system state, or capabilities.\n"
     "- The word 'callbacks' ALWAYS means call list_callbacks.\n"
+    "- When asked which commands a callback supports, ALWAYS call "
+    "list_commands. NEVER answer from memory — you do not know any "
+    "implant's command set until you call it.\n"
+    "- Before running commands on an unfamiliar callback, call "
+    "list_commands to see which commands it supports.\n"
     "- After finding credentials, ALWAYS call credential_create to store them.\n"
     "- After dropping files or creating persistence, call create_artifact.\n"
     "- After significant milestones, call event_log.\n"
@@ -49,5 +54,6 @@ SECRET_KEYS = {
 
 MAX_TOOL_ROUNDS = 15
 TASK_POLL_TIMEOUT = 120
+MAX_PROCESS_RESULTS = 100
 LLM_MAX_RETRIES = 5
 LLM_RETRY_BACKOFF = (2, 4, 8, 16, 32)

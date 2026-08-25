@@ -1,8 +1,12 @@
 """Stub mythic_container so tests can import echidna modules locally."""
+import os
 import sys
 import types
 import enum
 import asyncio
+
+# Use an in-memory SQLite store for tests (see core/state.py).
+os.environ.setdefault("ECHIDNA_STATE_DB", ":memory:")
 
 # ---- mythic_container stubs ----
 
@@ -115,8 +119,16 @@ for fn in [
     "SendMythicRPCCredentialSearch", "SendMythicRPCCredentialCreate",
     "SendMythicRPCArtifactCreate", "SendMythicRPCArtifactSearch",
     "SendMythicRPCOperationEventLogCreate", "SendMythicRPCAPITokenCreate",
+    "SendMythicRPCCallbackSearchCommand", "SendMythicRPCProcessSearch",
 ]:
     setattr(rpc_mod, fn, lambda *a, **k: None)
+
+
+def _msg_init(self, **kwargs):
+    for k, v in kwargs.items():
+        setattr(self, k, v)
+
+
 for cls_name in [
     "MythicRPCCallbackSearchMessage", "MythicRPCTaskSearchMessage",
     "MythicRPCTaskCreateMessage", "MythicRPCResponseSearchMessage",
@@ -124,8 +136,10 @@ for cls_name in [
     "MythicRPCArtifactCreateMessage", "MythicRPCArtifactSearchMessage",
     "MythicRPCArtifactSearchArtifactData",
     "MythicRPCOperationEventLogCreateMessage", "MythicRPCAPITokenCreateMessage",
+    "MythicRPCCallbackSearchCommandMessage", "MythicRPCProcessesSearchMessage",
+    "MythicRPCProcessSearchData",
 ]:
-    setattr(rpc_mod, cls_name, type(cls_name, (), {"__init__": lambda s, **k: None}))
+    setattr(rpc_mod, cls_name, type(cls_name, (), {"__init__": _msg_init}))
 sys.modules["mythic_container.MythicRPC"] = rpc_mod
 mc.MythicRPC = rpc_mod
 

@@ -1,6 +1,8 @@
 import json
 from mythic_container.MythicRPC import *
 
+from .state import get_store
+
 
 class ReportMixin:
 
@@ -131,9 +133,9 @@ class ReportMixin:
                 "without at least one executed task.\n"
             )
 
-        usage = self._token_usage.get(
-            request.ChannelID, {"input": 0, "output": 0},
-        )
+        usage = get_store().get_tokens(
+            request.ChannelID,
+        ) or {"input": 0, "output": 0}
         total = usage["input"] + usage["output"]
         sections.append("## Token Usage\n")
         sections.append(
@@ -172,9 +174,9 @@ class ReportMixin:
             lines.append("---")
             lines.append("")
 
-        usage = self._token_usage.get(
-            request.ChannelID, {"input": 0, "output": 0},
-        )
+        usage = get_store().get_tokens(
+            request.ChannelID,
+        ) or {"input": 0, "output": 0}
         total = usage["input"] + usage["output"]
         lines.append(
             f"*Exported {len(request.Context)} messages. "

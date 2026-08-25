@@ -4,6 +4,7 @@ WORKDIR /Mythic/
 COPY [".", "."]
 
 # Install aiohttp for async HTTP requests to LLM APIs
-RUN python3 -m pip install aiohttp
+# and mythic-container >= 0.7.0rc9 for Chat container support (ChatBase)
+RUN python3 -m pip install aiohttp "mythic-container>=0.7.0rc9"
 
 CMD ["python3", "main.py"]

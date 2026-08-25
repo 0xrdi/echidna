@@ -18,6 +18,28 @@ OPENAI_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "list_commands",
+            "description": (
+                "List the commands a Mythic callback supports. Call this "
+                "before execute_command on an unfamiliar callback to see "
+                "which commands are available and what they do, instead "
+                "of guessing command names."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "callback_id": {
+                        "type": "integer",
+                        "description": "Callback display ID (the # number)",
+                    },
+                },
+                "required": ["callback_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "execute_command",
             "description": (
                 "Execute a command on a Mythic callback and return the "
@@ -43,6 +65,36 @@ OPENAI_TOOLS = [
                     },
                 },
                 "required": ["callback_id", "command"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "process_search",
+            "description": (
+                "Search process data collected by Mythic across all "
+                "callbacks, without running new commands on targets. Use "
+                "this to spot security products (AV/EDR), find processes "
+                "by name or user, or review what is running on each host."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "host": {
+                        "type": "string",
+                        "description": "Filter by host name",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Filter by process name (e.g. MsMpEng.exe)",
+                    },
+                    "user": {
+                        "type": "string",
+                        "description": "Filter by user the process runs as",
+                    },
+                },
+                "required": [],
             },
         },
     },
@@ -179,7 +231,9 @@ OPENAI_TOOLS = [
 
 TOOL_SUMMARIES = {
     "list_callbacks": "see active implants",
+    "list_commands": "see which commands an implant supports",
     "execute_command": "run a command on an implant callback",
+    "process_search": "search collected process data across hosts",
     "credential_create": "store found credentials in Mythic",
     "create_artifact": "log OPSEC artifacts (files dropped, services created)",
     "event_log": "write to the operation timeline",

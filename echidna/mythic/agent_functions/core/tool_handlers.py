@@ -3,7 +3,7 @@ import json
 import asyncio
 import aiohttp
 from mythic_container.MythicRPC import *
-from .constants import TASK_POLL_TIMEOUT
+from .constants import TASK_POLL_TIMEOUT, MAX_PROCESS_RESULTS
 
 
 _TECHNIQUE_RE = re.compile(r"^T\d{4}(\.\d{3})?$")
@@ -14,7 +14,9 @@ class ToolHandlerMixin:
     async def _execute_tool(self, name, args, request, operator_id):
         dispatch = {
             "list_callbacks": self._tool_list_callbacks,
+            "list_commands": self._tool_list_commands,
             "execute_command": self._tool_execute_command,
+            "process_search": self._tool_process_search,
             "credential_create": self._tool_credential_create,
             "create_artifact": self._tool_create_artifact,
             "event_log": self._tool_event_log,
@@ -54,6 +56,46 @@ class ToolHandlerMixin:
                     "description": cb.Description,
                 })
             return json.dumps({"callbacks": callbacks})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    async def _tool_list_commands(self, args, request):
+        display_id = args.get("callback_id")
+        if not display_id:
+            return json.dumps({"error": "callback_id is required"})
+        try:
+            cb_search = await SendMythicRPCCallbackSearch(
+                MythicRPCCallbackSearchMessage(
+                    SearchCallbackDisplayID=int(display_id),
+                )
+            )
+            if not cb_search.Success or not cb_search.Results:
+                return json.dumps({
+                    "error": f"Callback #{display_id} not found",
+                })
+            task_id = await self._get_any_task_id()
+            resp = await SendMythicRPCCallbackSearchCommand(
+                MythicRPCCallbackSearchCommandMessage(
+                    CallbackID=cb_search.Results[0].ID,
+                    TaskID=task_id,
+                )
+            )
+            if not resp.Success:
+                return json.dumps({"error": resp.Error})
+            commands = [
+                {
+                    "name": c.Name,
+                    "description": c.Description,
+                    "help": c.HelpCmd,
+                    "needs_admin": c.NeedsAdmin,
+                }
+                for c in resp.Commands
+            ]
+            return json.dumps({
+                "callback_id": display_id,
+                "count": len(commands),
+                "commands": commands,
+            })
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -130,6 +172,61 @@ class ToolHandlerMixin:
                 "output": "\n".join(output_parts),
             })
 
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    async def _tool_process_search(self, args, request):
+        try:
+            task_id = await self._get_any_task_id()
+            if not task_id:
+                return json.dumps({
+                    "error": (
+                        "No tasks found — process search needs at least "
+                        "one executed task for operation context"
+                    ),
+                })
+            # Mythic's server-side process search applies ILIKE to bytea
+            # columns and errors out (pq: operator does not exist:
+            # bytea ~~* unknown), so filters are applied client-side.
+            resp = await SendMythicRPCProcessSearch(
+                MythicRPCProcessesSearchMessage(
+                    TaskID=task_id,
+                    Process=MythicRPCProcessSearchData(),
+                )
+            )
+            if not resp.Success:
+                return json.dumps({"error": resp.Error})
+            host_f = (args.get("host") or "").lower()
+            name_f = (args.get("name") or "").lower()
+            user_f = (args.get("user") or "").lower()
+            matched = [
+                p for p in resp.Processes
+                if (not host_f or host_f in (p.Host or "").lower())
+                and (not name_f or name_f in (p.Name or "").lower())
+                and (not user_f or user_f in (p.User or "").lower())
+            ]
+            total = len(matched)
+            processes = [
+                {
+                    "host": p.Host,
+                    "pid": p.ProcessID,
+                    "ppid": p.ParentProcessID,
+                    "name": p.Name,
+                    "user": p.User,
+                    "arch": p.Architecture,
+                    "bin_path": p.BinPath,
+                    "command_line": (p.CommandLine or "")[:200],
+                    "signer": p.Signer,
+                }
+                for p in matched[:MAX_PROCESS_RESULTS]
+            ]
+            result = {"count": len(processes), "processes": processes}
+            if total > len(processes):
+                result["truncated"] = (
+                    f"showing {len(processes)} of {total} — "
+                    "refine host/name/user filters"
+                )
+            return json.dumps(result)
         except Exception as e:
             return json.dumps({"error": str(e)})
 

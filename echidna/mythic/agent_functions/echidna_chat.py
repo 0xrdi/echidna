@@ -24,6 +24,7 @@ from .core import (
     ProviderMixin,
     ToolHandlerMixin,
     ReportMixin,
+    get_store,
 )
 
 
@@ -208,10 +209,11 @@ class EchidnaChat(ProviderMixin, ToolHandlerMixin, ReportMixin, Chat):
 
     # ---- per-channel state ----
 
-    _context_resets = {}
+    # Pinned callbacks, token usage, and context reset cutoffs live in
+    # the SQLite StateStore (core/state.py) so they survive restarts.
+    # _pending_resets is transient by design: a missed deferred cutoff
+    # just means the next context is not trimmed once.
     _pending_resets = set()
-    _pinned_callbacks = {}
-    _token_usage = {}
 
     # ---- main entry point ----
 
@@ -304,10 +306,11 @@ class EchidnaChat(ProviderMixin, ToolHandlerMixin, ReportMixin, Chat):
                 await self._list_playbooks(request, response_key)
                 return
             if name == "reset":
-                self._context_resets[request.ChannelID] = (
-                    request.Context[-1].ID if request.Context else 0
+                get_store().set_cutoff(
+                    request.ChannelID,
+                    request.Context[-1].ID if request.Context else 0,
                 )
-                self._pinned_callbacks.pop(request.ChannelID, None)
+                get_store().clear_pinned(request.ChannelID)
                 await self._update_channel_metadata(request)
                 await self.send_text(
                     request, response_key,
@@ -336,10 +339,10 @@ class EchidnaChat(ProviderMixin, ToolHandlerMixin, ReportMixin, Chat):
         if request.ChannelID in self._pending_resets:
             self._pending_resets.discard(request.ChannelID)
             if request.Context:
-                self._context_resets[request.ChannelID] = (
-                    request.Context[-1].ID
+                get_store().set_cutoff(
+                    request.ChannelID, request.Context[-1].ID,
                 )
-        cutoff = self._context_resets.get(request.ChannelID, 0)
+        cutoff = get_store().get_cutoff(request.ChannelID)
         if cutoff:
             request.Context = [
                 m for m in request.Context if m.ID > cutoff
@@ -364,7 +367,7 @@ class EchidnaChat(ProviderMixin, ToolHandlerMixin, ReportMixin, Chat):
             return
 
         system_prompt = SYSTEM_PROMPT
-        pinned = self._pinned_callbacks.get(request.ChannelID)
+        pinned = get_store().get_pinned(request.ChannelID)
         if pinned:
             system_prompt += (
                 f"\n\nDEFAULT CALLBACK: The operator has pinned "
@@ -454,12 +457,11 @@ class EchidnaChat(ProviderMixin, ToolHandlerMixin, ReportMixin, Chat):
     def _track_tokens(self, channel_id, usage):
         if not usage:
             return
-        existing = self._token_usage.get(channel_id, {
-            "input": 0, "output": 0,
-        })
-        existing["input"] += usage.get("input", 0)
-        existing["output"] += usage.get("output", 0)
-        self._token_usage[channel_id] = existing
+        get_store().add_tokens(
+            channel_id,
+            usage.get("input", 0),
+            usage.get("output", 0),
+        )
 
     async def _update_channel_metadata(self, request):
         config = ChatConfigView.from_request(request)
@@ -467,8 +469,8 @@ class EchidnaChat(ProviderMixin, ToolHandlerMixin, ReportMixin, Chat):
         model = config.text("model") or PROVIDER_DEFAULTS.get(provider, "")
         playbook_name = config.text("playbook", "None")
         approval_mode = config.text("approval_mode", "Enabled")
-        pinned = self._pinned_callbacks.get(request.ChannelID)
-        usage = self._token_usage.get(request.ChannelID)
+        pinned = get_store().get_pinned(request.ChannelID)
+        usage = get_store().get_tokens(request.ChannelID)
         items = [
             {"key": "provider", "label": "Provider", "value": provider, "order": 0},
             {"key": "model", "label": "Model", "value": model, "order": 1},
@@ -491,7 +493,7 @@ class EchidnaChat(ProviderMixin, ToolHandlerMixin, ReportMixin, Chat):
             request.SlashCommand.Argument or ""
         ).strip().lstrip("#")
         if not arg or arg == "none":
-            self._pinned_callbacks.pop(request.ChannelID, None)
+            get_store().clear_pinned(request.ChannelID)
             await self.send_text(
                 request, response_key,
                 content="Callback unpinned.",
@@ -505,7 +507,7 @@ class EchidnaChat(ProviderMixin, ToolHandlerMixin, ReportMixin, Chat):
                     f"Invalid callback ID: {arg}",
                 )
                 return
-            self._pinned_callbacks[request.ChannelID] = cb_id
+            get_store().set_pinned(request.ChannelID, cb_id)
             await self.send_text(
                 request, response_key,
                 content=(
@@ -542,7 +544,9 @@ class EchidnaChat(ProviderMixin, ToolHandlerMixin, ReportMixin, Chat):
             "base URL).\n\n"
             "**Mythic Tools** (used by the LLM automatically):\n"
             "- `list_callbacks` — active implant inventory\n"
+            "- `list_commands` — see which commands an implant supports\n"
             "- `execute_command` — run a command on a callback\n"
+            "- `process_search` — search collected process data\n"
             "- `credential_create` — store found creds in Mythic\n"
             "- `create_artifact` — log OPSEC artifacts\n"
             "- `event_log` — write to operation timeline\n"

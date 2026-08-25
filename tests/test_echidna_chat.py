@@ -4,6 +4,7 @@ import json
 import types
 import pytest
 from echidna.mythic.agent_functions.echidna_chat import EchidnaChat, PLAYBOOKS
+from echidna.mythic.agent_functions.core.state import StateStore, get_store
 
 _cb = sys.modules["mythic_container.ChatBase"]
 FakeChatRequest = _cb.ChatRequest
@@ -71,38 +72,38 @@ class TestChatCompletionsUrl:
 
 
 # ---- _track_tokens ----
+# Each test uses a unique channel ID: the in-memory store is shared
+# across the whole test process.
 
 class TestTrackTokens:
     def test_first_usage(self, chat):
-        chat._token_usage.pop(99, None)
-        chat._track_tokens(99, {"input": 100, "output": 50})
-        assert chat._token_usage[99] == {"input": 100, "output": 50}
+        chat._track_tokens(991, {"input": 100, "output": 50})
+        assert get_store().get_tokens(991) == {"input": 100, "output": 50}
 
     def test_accumulates(self, chat):
-        chat._token_usage[99] = {"input": 100, "output": 50}
-        chat._track_tokens(99, {"input": 200, "output": 100})
-        assert chat._token_usage[99] == {"input": 300, "output": 150}
+        chat._track_tokens(992, {"input": 100, "output": 50})
+        chat._track_tokens(992, {"input": 200, "output": 100})
+        assert get_store().get_tokens(992) == {"input": 300, "output": 150}
 
     def test_skips_none(self, chat):
-        before = dict(chat._token_usage)
-        chat._track_tokens(99, None)
-        assert chat._token_usage.get(99) == before.get(99)
+        chat._track_tokens(993, None)
+        assert get_store().get_tokens(993) is None
 
     def test_skips_empty(self, chat):
-        chat._token_usage[99] = {"input": 10, "output": 5}
-        chat._track_tokens(99, {})
-        assert chat._token_usage[99] == {"input": 10, "output": 5}
+        chat._track_tokens(994, {"input": 10, "output": 5})
+        chat._track_tokens(994, {})
+        assert get_store().get_tokens(994) == {"input": 10, "output": 5}
 
 
 # ---- context reset logic ----
 
 class TestContextReset:
     def test_pending_reset_sets_cutoff(self, chat):
-        chat._pending_resets.add(42)
+        chat._pending_resets.add(942)
         msg = types.SimpleNamespace(ID=100, AuthorType="ai",
                                      SenderDisplayName="Echidna",
                                      Message="report", CreatedAt="")
-        req = FakeChatRequest(ChannelID=42, Context=[msg])
+        req = FakeChatRequest(ChannelID=942, Context=[msg])
         req.Configuration = {"provider": "Anthropic"}
         req.Secrets = {"anthropic_api_key": "sk-test"}
 
@@ -110,19 +111,19 @@ class TestContextReset:
         if req.ChannelID in chat._pending_resets:
             chat._pending_resets.discard(req.ChannelID)
             if req.Context:
-                chat._context_resets[req.ChannelID] = req.Context[-1].ID
+                get_store().set_cutoff(req.ChannelID, req.Context[-1].ID)
 
-        assert chat._context_resets[42] == 100
-        assert 42 not in chat._pending_resets
+        assert get_store().get_cutoff(942) == 100
+        assert 942 not in chat._pending_resets
 
     def test_cutoff_filters_old_messages(self, chat):
-        chat._context_resets[42] = 50
+        get_store().set_cutoff(943, 50)
         old = types.SimpleNamespace(ID=30)
         boundary = types.SimpleNamespace(ID=50)
         new = types.SimpleNamespace(ID=70)
         context = [old, boundary, new]
 
-        cutoff = chat._context_resets.get(42, 0)
+        cutoff = get_store().get_cutoff(943)
         filtered = [m for m in context if m.ID > cutoff]
         assert len(filtered) == 1
         assert filtered[0].ID == 70
@@ -166,11 +167,13 @@ class TestClassStructure:
         assert "ToolHandlerMixin" in mro_names
         assert "ReportMixin" in mro_names
 
-    def test_has_state_dicts(self):
-        assert hasattr(EchidnaChat, "_context_resets")
+    def test_state_is_sqlite_backed(self):
         assert hasattr(EchidnaChat, "_pending_resets")
-        assert hasattr(EchidnaChat, "_pinned_callbacks")
-        assert hasattr(EchidnaChat, "_token_usage")
+        assert isinstance(get_store(), StateStore)
+        # per-channel state moved to core/state.py (SQLite)
+        assert not hasattr(EchidnaChat, "_token_usage")
+        assert not hasattr(EchidnaChat, "_pinned_callbacks")
+        assert not hasattr(EchidnaChat, "_context_resets")
 
     def test_semver(self):
         assert EchidnaChat.semver == "1.2.0"
